@@ -10,23 +10,35 @@ void BroanComponent::setup()
 	Component::setup();
 	//esp_log_level_set("broan", ESP_LOG_DEBUG);
 
-	m_vecHeader.reserve(5);
+	m_vecHeader.resize(5);
+	m_HrvFrameReader.m_vecBuffer.reserve(5 + MAX_FRAME_PAYLOAD_SIZE + 2);
+	m_RemoteFrameReader.m_vecBuffer.reserve(5 + MAX_FRAME_PAYLOAD_SIZE + 2);
 
 	for( int i=0; i<BroanField::MAX_FIELDS; i++ )
 		m_vecFields[i].markDirty();
 
   	if(flow_control_pin_)
     	this->flow_control_pin_->setup();
+
+  	if(remote_flow_control_pin_)
+    	this->remote_flow_control_pin_->setup();
 }
 
 
 void BroanComponent::loop()
 {
-	while ( true )
+	if( isPassThroughEnabled() )
 	{
-		if( !readHeader() ) break;
-		bool bRead = readMessage();
-		if( !bRead ) break;
+		processPassThrough();
+	}
+	else
+	{
+		while ( true )
+		{
+			if( !readHeader() ) break;
+			bool bRead = readMessage();
+			if( !bRead ) break;
+		}
 	}
 
 	replyIfAllowed();
@@ -37,11 +49,18 @@ void BroanComponent::loop()
 void BroanComponent::dump_config()
 {
 	ESP_LOGCONFIG("broan", "Broan:");
+	ESP_LOGCONFIG("broan", "Pass-through mode: %s", isPassThroughEnabled() ? "enabled" : "disabled" );
 	if(flow_control_pin_)
 	{
 		char buffer[255];
 		this->flow_control_pin_->dump_summary( buffer, 255 );
 		ESP_LOGCONFIG("broan", "Flow Control Pin: %s", buffer );
+	}
+	if(remote_flow_control_pin_)
+	{
+		char buffer[255];
+		this->remote_flow_control_pin_->dump_summary( buffer, 255 );
+		ESP_LOGCONFIG("broan", "Remote Flow Control Pin: %s", buffer );
 	}
 }
 
@@ -159,6 +178,204 @@ bool BroanComponent::readMessage()
 	return true;
 }
 
+bool BroanComponent::readFrame(uart::UARTComponent *uart, BroanFrameReader &reader, BroanFrame &frame, const char *label)
+{
+	while( uart && uart->available() > 0 )
+	{
+		uint8_t value;
+		if( !uart->read_byte( &value ) )
+			return false;
+
+		if( reader.m_vecBuffer.empty() && value != 0x01 )
+		{
+			ESP_LOGW("broan", "%s alignment: unexpected %02X in position 0", label, value );
+			continue;
+		}
+
+		reader.m_vecBuffer.push_back( value );
+
+		size_t pos = reader.m_vecBuffer.size() - 1;
+		if( ( pos == 1 || pos == 2 ) && value > 32 )
+		{
+			ESP_LOGW("broan", "%s alignment: unexpected address %02X in position %i", label, value, static_cast<int>(pos) );
+			reader.m_vecBuffer.clear();
+			continue;
+		}
+		if( pos == 3 && value != 0x01 )
+		{
+			ESP_LOGW("broan", "%s alignment: unexpected %02X in position %i", label, value, static_cast<int>(pos) );
+			reader.m_vecBuffer.clear();
+			continue;
+		}
+
+		if( reader.m_vecBuffer.size() < 5 )
+			continue;
+
+		size_t len = reader.m_vecBuffer[4];
+		size_t total = 5 + len + 2;
+		if( reader.m_vecBuffer.size() < total )
+			continue;
+
+		if( reader.m_vecBuffer[total - 1] != 0x04 )
+		{
+			ESP_LOGE("broan", "%s missing 0x04 footer", label );
+			reader.m_vecBuffer.clear();
+			continue;
+		}
+
+		std::vector<uint8_t> message(
+			reader.m_vecBuffer.begin() + 5,
+			reader.m_vecBuffer.begin() + 5 + len
+		);
+
+		uint8_t checksum = reader.m_vecBuffer[5 + len];
+		uint8_t expected_checksum = calculateChecksum( reader.m_vecBuffer[2], reader.m_vecBuffer[1], message );
+		if( checksum != expected_checksum )
+		{
+			ESP_LOGE("broan", "%s checksum mismatch: got %02X, expected %02X", label, checksum, expected_checksum );
+			reader.m_vecBuffer.clear();
+			continue;
+		}
+
+		frame.m_nTarget = reader.m_vecBuffer[1];
+		frame.m_nSender = reader.m_vecBuffer[2];
+		frame.m_vecMessage = message;
+		frame.m_vecRaw = reader.m_vecBuffer;
+
+		reader.m_vecBuffer.clear();
+		return true;
+	}
+
+	return false;
+}
+
+bool BroanComponent::readFrameFromHrv(BroanFrame &frame)
+{
+	return readFrame( this->parent_, m_HrvFrameReader, frame, "HRV" );
+}
+
+bool BroanComponent::readFrameFromRemote(BroanFrame &frame)
+{
+	return readFrame( this->remote_uart_, m_RemoteFrameReader, frame, "remote" );
+}
+
+void BroanComponent::processPassThrough()
+{
+	int processed = 0;
+	while( processed < 16 )
+	{
+		bool handled = false;
+
+		BroanFrame hrvFrame;
+		if( readFrameFromHrv( hrvFrame ) )
+		{
+			handleHrvPassThroughFrame( hrvFrame );
+			handled = true;
+			processed++;
+		}
+
+		BroanFrame remoteFrame;
+		if( readFrameFromRemote( remoteFrame ) )
+		{
+			handleRemotePassThroughFrame( remoteFrame );
+			handled = true;
+			processed++;
+		}
+
+		if( !handled )
+			break;
+	}
+}
+
+bool BroanComponent::shouldTakePrivateGrant(const BroanFrame &frame) const
+{
+	return isPassThroughEnabled()
+		&& !m_bPrivateControlSession
+		&& !m_bHaveControl
+		&& !m_bExpectingReply
+		&& !m_vecSendQueue.empty()
+		&& frame.m_nTarget == m_nClientAddress
+		&& !frame.m_vecMessage.empty()
+		&& frame.m_vecMessage[0] == 0x04;
+}
+
+void BroanComponent::handleHrvPassThroughFrame(const BroanFrame &frame)
+{
+	if( frame.m_vecMessage.empty() )
+	{
+		writeRawToRemote( frame.m_vecRaw );
+		return;
+	}
+
+	if( m_bPrivateControlSession )
+	{
+		handleMessage( frame.m_nSender, frame.m_nTarget, frame.m_vecMessage );
+		return;
+	}
+
+	if( shouldTakePrivateGrant( frame ) )
+	{
+		m_bPrivateControlSession = true;
+		handleMessage( frame.m_nSender, frame.m_nTarget, frame.m_vecMessage );
+		return;
+	}
+
+	writeRawToRemote( frame.m_vecRaw );
+
+	if( frame.m_nTarget != m_nClientAddress )
+		return;
+
+	switch( frame.m_vecMessage[0] )
+	{
+		case 0x02:
+			m_bERVReady = true;
+			break;
+
+		case 0x04:
+			m_nLastHadControl = millis();
+			m_bERVReady = true;
+			break;
+
+		case 0x21:
+			parseBroanFields( frame.m_vecMessage );
+			m_bERVReady = true;
+			break;
+
+		case 0x41:
+		{
+			for( size_t i=1; i + 1 < frame.m_vecMessage.size(); i+=2 )
+			{
+				BroanField_t *pField = lookupField( frame.m_vecMessage[i], frame.m_vecMessage[i+1] );
+				if( !pField )
+				{
+					ESP_LOGW("broan", "Got write response for unknown field %02X %02X", frame.m_vecMessage[i], frame.m_vecMessage[i+1] );
+					continue;
+				}
+				pField->markDirty();
+			}
+			m_bERVReady = true;
+			break;
+		}
+
+		default:
+			break;
+	}
+}
+
+void BroanComponent::handleRemotePassThroughFrame(const BroanFrame &frame)
+{
+	if( m_bPrivateControlSession )
+	{
+		ESP_LOGD("broan", "Dropping remote frame while ESP has private control");
+		return;
+	}
+
+	writeRawToHrv( frame.m_vecRaw );
+
+	if( frame.m_nTarget == m_nServerAddress && !frame.m_vecMessage.empty() && frame.m_vecMessage[0] == 0x03 )
+		m_bWaitForRemote = false;
+}
+
 void esp_log_vector_hex(const char* tag, const std::vector<uint8_t>& message) {
     if (message.empty()) {
         ESP_LOGW(tag, "Message vector is empty");
@@ -273,6 +490,13 @@ void BroanComponent::replyIfAllowed()
 		ESP_LOGW("broan","ERV has not yielded control in over %ims, communication has likely failed. Please restart the device.", CONTROL_TIMEOUT);
 		m_bERVReady = false;
 		m_nLastHadControl = time;
+		if( isPassThroughEnabled() )
+		{
+			m_bHaveControl = false;
+			m_bExpectingReply = false;
+			m_bHaveSentMessage = false;
+			m_bPrivateControlSession = false;
+		}
 	}
 
 	if( !m_bHaveControl || m_bExpectingReply )
@@ -294,6 +518,7 @@ void BroanComponent::replyIfAllowed()
 		m_bHaveControl = false;
 		m_bERVReady = true;
 		m_bHaveSentMessage = false;
+		m_bPrivateControlSession = false;
 		return;
 	}
 
@@ -338,6 +563,8 @@ void BroanComponent::parseBroanFields(const std::vector<uint8_t>& message)
 		uint32_t oldVal = pField->m_value.m_nValue;
 		for (size_t b = 0; b < len; ++b)
 			pField->m_value.m_rgBytes[b] = static_cast<char>(message[nDataPos+b]);
+
+		pField->m_unLastUpdate = millis();
 	
 		if( oldVal == pField->m_value.m_nValue )
 			continue;
@@ -541,25 +768,51 @@ void BroanComponent::handleUnknownField(uint32_t nOpcodeHigh, uint32_t nOpcodeLo
 void BroanComponent::send(const std::vector<uint8_t>& vecMessage)
 {
 #ifndef LISTEN_ONLY
- 	if(flow_control_pin_)
-    	flow_control_pin_->digital_write(true);
+	if( vecMessage.size() > MAX_FRAME_PAYLOAD_SIZE )
+	{
+		ESP_LOGE("broan", "Refusing to send oversized message: %i bytes", static_cast<int>( vecMessage.size() ) );
+		return;
+	}
 
-	uint8_t header = 0x01;
-	uint8_t alignment = 0x01;
-	uint8_t footer = 0x04;
-	write(header);
-	write(m_nServerAddress);
-	write(m_nClientAddress);
-	write(alignment);
-	write((uint8_t)vecMessage.size());
-	for (auto b : vecMessage) write(b);
-	write(calculateChecksum(m_nClientAddress, m_nServerAddress, vecMessage));
-	write(footer);
+	std::vector<uint8_t> frame;
+	frame.reserve( 5 + vecMessage.size() + 2 );
+	frame.push_back( 0x01 );
+	frame.push_back( m_nServerAddress );
+	frame.push_back( m_nClientAddress );
+	frame.push_back( 0x01 );
+	frame.push_back( static_cast<uint8_t>( vecMessage.size() ) );
+	frame.insert( frame.end(), vecMessage.begin(), vecMessage.end() );
+	frame.push_back( calculateChecksum( m_nClientAddress, m_nServerAddress, vecMessage ) );
+	frame.push_back( 0x04 );
 
-	flush();
+	writeRawToHrv( frame );
+#endif
+}
 
- 	if(flow_control_pin_)
-    	flow_control_pin_->digital_write(false);
+void BroanComponent::writeRawToHrv(const std::vector<uint8_t>& frame)
+{
+	writeRaw( this->parent_, this->flow_control_pin_, frame );
+}
+
+void BroanComponent::writeRawToRemote(const std::vector<uint8_t>& frame)
+{
+	writeRaw( this->remote_uart_, this->remote_flow_control_pin_, frame );
+}
+
+void BroanComponent::writeRaw(uart::UARTComponent *uart, GPIOPin *flow_control_pin, const std::vector<uint8_t>& frame)
+{
+#ifndef LISTEN_ONLY
+	if( !uart || frame.empty() )
+		return;
+
+ 	if(flow_control_pin)
+    	flow_control_pin->digital_write(true);
+
+	uart->write_array( frame );
+	uart->flush();
+
+ 	if(flow_control_pin)
+    	flow_control_pin->digital_write(false);
 #endif
 }
 
@@ -626,7 +879,7 @@ void BroanComponent::runTasks()
 	}
 
 
-	if( time - m_unLastHeartbeat > HEARTBEAT_RATE )
+	if( !isPassThroughEnabled() && time - m_unLastHeartbeat > HEARTBEAT_RATE )
 	{
 		m_unLastHeartbeat = time;
 		std::vector<unsigned char> vecRequest;

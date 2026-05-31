@@ -1,11 +1,21 @@
 #pragma once
 
+#include "esphome/core/defines.h"
 #include "esphome.h"
 #include <deque>
+#include <vector>
 #include "esphome/core/component.h"
+
+#ifdef USE_SENSOR
+#include "esphome/components/sensor/sensor.h"
+#endif
 
 #ifdef USE_SELECT
 #include "esphome/components/select/select.h"
+#endif
+
+#ifdef USE_NUMBER
+#include "esphome/components/number/number.h"
 #endif
 
 #ifdef USE_BUTTON
@@ -31,6 +41,7 @@ namespace broan {
 #define UPDATE_RATE_NEVER 0xFFFFFFFF
 
 #define MAX_REQUEST_SIZE 10
+#define MAX_FRAME_PAYLOAD_SIZE 255
 #define INVALID_FIELD 0xFFFFFF
 
 #define FILTER_LIFE_MAX 7884000
@@ -151,6 +162,19 @@ struct BroanField_t
 
 };
 
+struct BroanFrame
+{
+	uint8_t m_nTarget = 0;
+	uint8_t m_nSender = 0;
+	std::vector<uint8_t> m_vecMessage;
+	std::vector<uint8_t> m_vecRaw;
+};
+
+struct BroanFrameReader
+{
+	std::vector<uint8_t> m_vecBuffer;
+};
+
 class BroanComponent : public Component, public uart::UARTDevice
 {
 
@@ -264,6 +288,8 @@ public:
 public:
 	// Setup
 	void set_flow_control_pin(GPIOPin *flow_control_pin) { this->flow_control_pin_ = flow_control_pin; }
+	void set_remote_uart_parent(uart::UARTComponent *remote_uart) { this->remote_uart_ = remote_uart; }
+	void set_remote_flow_control_pin(GPIOPin *remote_flow_control_pin) { this->remote_flow_control_pin_ = remote_flow_control_pin; }
 
 	// Control API
 	void setFanMode( std::string mode );
@@ -292,10 +318,13 @@ private:
 
 	std::vector<uint8_t> m_vecHeader;
 	bool m_bHaveHeader = false;
+	BroanFrameReader m_HrvFrameReader;
+	BroanFrameReader m_RemoteFrameReader;
 
 	bool m_bHaveControl = false;
 	bool m_bExpectingReply = false;
 	bool m_bHaveSentMessage = false;
+	bool m_bPrivateControlSession = false;
 
 	std::deque<std::vector<uint8_t>> m_vecSendQueue;
 
@@ -305,6 +334,17 @@ private:
 	bool readHeader();
 	bool readMessage();
 	void handleMessage(uint8_t sender, uint8_t target, const std::vector<uint8_t>& message);
+	bool readFrame(uart::UARTComponent *uart, BroanFrameReader &reader, BroanFrame &frame, const char *label);
+	bool readFrameFromHrv(BroanFrame &frame);
+	bool readFrameFromRemote(BroanFrame &frame);
+	void processPassThrough();
+	void handleHrvPassThroughFrame(const BroanFrame &frame);
+	void handleRemotePassThroughFrame(const BroanFrame &frame);
+	bool shouldTakePrivateGrant(const BroanFrame &frame) const;
+	bool isPassThroughEnabled() const { return this->remote_uart_ != nullptr; }
+	void writeRawToHrv(const std::vector<uint8_t>& frame);
+	void writeRawToRemote(const std::vector<uint8_t>& frame);
+	void writeRaw(uart::UARTComponent *uart, GPIOPin *flow_control_pin, const std::vector<uint8_t>& frame);
 	void send(const std::vector<uint8_t>& msg);
 	uint8_t calculateChecksum(uint8_t sender, uint8_t receiver, const std::vector<uint8_t>& message);
 	void replyIfAllowed();
@@ -339,6 +379,8 @@ protected:
 	uint32_t filter_life_{0};
 
 	GPIOPin *flow_control_pin_{nullptr};
+	uart::UARTComponent *remote_uart_{nullptr};
+	GPIOPin *remote_flow_control_pin_{nullptr};
 };
 
 }  // namespace broan

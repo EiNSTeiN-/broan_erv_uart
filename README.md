@@ -24,7 +24,7 @@ HRVs have been reported to work as well, but tend to support fewer features. You
 
 ## Requirements
 1) You will need an esphome device that can communicate over rs485. Some devices come with this out of the box (waveshare esp32-s3-relay-6ch), or you can just buy an external tranceiver and wire it to the uart of your choice. Note that the waveshare device listed earlier is much easier to use than most, as it has automatic flow control and can be powered directly from the 12v output on your ERV. If you use a different device and make a working, stable configuration, please open an issue so we can start building a list with configuration files.
-2) This library does not coexist with other serial wall remotes. This is a software limitation on the ERV itself, it will only ever respond to one device on the bus. It's theoretically possible to MITM a remote but that's outside the scope of this component.
+2) In the default single-port configuration this library replaces the serial wall remote. To keep the wall remote installed, use pass-through mode with a second RS485 transceiver.
 3) You will ideally want to power this directly from the 12v output on the erv itself. this isn't a hard requirement, but it simplifies things a lot. If the ERV completes the handshake with the esp32 and it later goes away, the ERV will eventually drop into an error state and shut down, so it's just one less point of failure.
 
 ## Installation
@@ -45,9 +45,16 @@ Also be aware some RS485 devices will label their pins A and B instead of D+ and
 More features will be added as time allows. I've documented many fields that aren't supported yet. If there's a specific feature you want prioritized, open an issue. This project is at a point where it "works for me" so I don't have a lot of guiding light on what else should be added without external input.
 
 ## Humidity Control Mode
-In Humidity Control Mode, the controller sets a target humidity level and the ERV automatically runs if the humidity is above this level. The ERV does not have a humidity sensor - the current humidity reading is sent periodically from the controller.  Since we are replacing the original controller, we need to send current humidity readings from the ESP device. This can be done from a lambda in your ESPHome config calling the setCurrentHumidity() function.  For an example configuration, see the [humidity_control_sample.yaml](./examples/humidity_control_example.yaml) configuration in the [examples](./examples/) directory.
+In Humidity Control Mode, the controller sets a target humidity level and the ERV automatically runs if the humidity is above this level. The ERV does not have a humidity sensor - the current humidity reading is sent periodically from the controller. In single-port mode, the ESP device replaces the original controller and must send current humidity readings itself. This can be done from a lambda in your ESPHome config calling the setCurrentHumidity() function. For an example configuration, see the [humidity_control_sample.yaml](./examples/humidity_control_example.yaml) configuration in the [examples](./examples/) directory.
 
 To use humidity control mode once it is enabled, set the desired humidity with "Humidity Setpoint", and then turn on the Humidity Control switch.
+
+## Pass-through wall remote mode
+Pass-through mode lets the ESP32 sit between the ERV/HRV and the original serial wall remote. Configure `uart_id` as the HRV-side RS485 port and `remote_uart_id` as the wall-remote-side RS485 port. Frames from either side are forwarded unchanged, so the wall remote continues to work and display current state.
+
+When Home Assistant queues a command, the ESP32 takes one private HRV control grant, sends its command, receives the reply, then releases control and resumes transparent forwarding. If your RS485 boards need manual driver-enable pins, set `flow_control_pin` for the HRV side and `remote_flow_control_pin` for the wall remote side.
+
+See [examples/pass_through_example.yaml](./examples/pass_through_example.yaml) for a two-UART configuration.
 
 ## FAQ
 Q: I see errors about failed communication
@@ -62,7 +69,7 @@ A: Not everything is actually exposed via the rs485 interface. I may need dumps 
 
 Q: What if I still want wall controls?
 
-A: You can use the aux remotes, those use the dry contact interface which is a hard override. The fan mode will indicate "ovr" (override) when these controls are used. This is how Broan bypasses the protocol limitation. Alternatively, look at something like the Sonoff NSPanel and control the device via Home Assistant instead.
+A: Use pass-through mode with two RS485 ports if you want to keep the serial wall remote. Aux remotes using the dry-contact interface also work as hard overrides; the fan mode will indicate "ovr" (override) when these controls are used.
 
 ### ESPhome yaml
 Add this to an existing config.
