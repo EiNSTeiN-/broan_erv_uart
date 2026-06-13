@@ -4,6 +4,7 @@
 #include "esphome.h"
 #include <deque>
 #include <vector>
+#include <string>
 #include "esphome/core/component.h"
 
 #ifdef USE_SENSOR
@@ -175,6 +176,28 @@ struct BroanFrameReader
 	std::vector<uint8_t> m_vecBuffer;
 };
 
+struct BroanDiagnosticBurst
+{
+	std::vector<uint8_t> m_vecBytes;
+	bool m_bTruncated = false;
+	uint32_t m_unOmittedBytes = 0;
+};
+
+struct BroanDiagnosticSideStats
+{
+	bool m_bReceivedData = false;
+	uint32_t m_unByteCount = 0;
+	uint32_t m_unInvalidStartBytes = 0;
+	uint32_t m_unInvalidFrameCount = 0;
+	uint32_t m_unDroppedBurstCount = 0;
+	std::vector<BroanDiagnosticBurst> m_vecBursts;
+	BroanDiagnosticBurst m_CurrentBurst;
+	uint32_t m_unLastByteAt = 0;
+	std::vector<uint8_t> m_vecFrameBuffer;
+	uint32_t m_unValidFrameCount = 0;
+	std::vector<BroanFrame> m_vecValidFrames;
+};
+
 class BroanComponent : public Component, public uart::UARTDevice
 {
 
@@ -290,6 +313,7 @@ public:
 	void set_flow_control_pin(GPIOPin *flow_control_pin) { this->flow_control_pin_ = flow_control_pin; }
 	void set_remote_uart_parent(uart::UARTComponent *remote_uart) { this->remote_uart_ = remote_uart; }
 	void set_remote_flow_control_pin(GPIOPin *remote_flow_control_pin) { this->remote_flow_control_pin_ = remote_flow_control_pin; }
+	void set_uart_diagnostic_mode(bool enabled) { this->m_bUartDiagnosticMode = enabled; }
 
 	// Control API
 	void setFanMode( std::string mode );
@@ -328,6 +352,17 @@ private:
 
 	std::deque<std::vector<uint8_t>> m_vecSendQueue;
 
+	bool m_bUartDiagnosticMode = false;
+	bool m_bUartDiagnosticAttemptActive = false;
+	bool m_bUartDiagnosticFinished = false;
+	bool m_bUartDiagnosticInverted = false;
+	uint32_t m_unUartDiagnosticBootAt = 0;
+	uint32_t m_unUartDiagnosticAttemptStartedAt = 0;
+	uint32_t m_unUartDiagnosticAttemptCount = 0;
+	size_t m_unUartDiagnosticBaudIndex = 0;
+	BroanDiagnosticSideStats m_HrvDiagnosticStats;
+	BroanDiagnosticSideStats m_RemoteDiagnosticStats;
+
 
 private:
 	// Internal
@@ -342,6 +377,23 @@ private:
 	void handleRemotePassThroughFrame(const BroanFrame &frame);
 	bool shouldTakePrivateGrant(const BroanFrame &frame) const;
 	bool isPassThroughEnabled() const { return this->remote_uart_ != nullptr; }
+	void processUartDiagnostic();
+	void startUartDiagnosticAttempt();
+	void finishUartDiagnosticAttempt(bool success);
+	void advanceUartDiagnosticAttempt();
+	void configureDiagnosticUart(uart::UARTComponent *uart, uint32_t baud, bool inverted, const char *label);
+	void drainDiagnosticUart(uart::UARTComponent *uart);
+	void resetDiagnosticStats(BroanDiagnosticSideStats &stats);
+	void finalizeDiagnosticBurst(BroanDiagnosticSideStats &stats);
+	void processDiagnosticUart(uart::UARTComponent *uart, BroanDiagnosticSideStats &stats, const char *label);
+	bool processDiagnosticByte(BroanDiagnosticSideStats &stats, uint8_t value, BroanFrame &frame);
+	bool hasDiagnosticSuccess() const;
+	const BroanFrame* firstDiagnosticFrame(const BroanDiagnosticSideStats &stats) const;
+	const BroanFrame* firstDiagnosticFrame(const char **label) const;
+	uint8_t inferClientAddress(const BroanFrame &frame) const;
+	void logDiagnosticReport(bool success);
+	void logDiagnosticSideReport(const char *label, const BroanDiagnosticSideStats &stats);
+	std::string formatBytes(const std::vector<uint8_t> &bytes) const;
 	void writeRawToHrv(const std::vector<uint8_t>& frame);
 	void writeRawToRemote(const std::vector<uint8_t>& frame);
 	void writeRaw(uart::UARTComponent *uart, GPIOPin *flow_control_pin, const std::vector<uint8_t>& frame);

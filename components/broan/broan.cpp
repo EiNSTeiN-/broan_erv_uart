@@ -1,7 +1,21 @@
 #include "broan.h"
 
+#ifdef USE_ESP32
+#include "esphome/components/uart/uart_component_esp_idf.h"
+#include <driver/uart.h>
+#endif
+
 namespace esphome {
 namespace broan { // Change 'broan' to match your component name
+
+static const uint32_t UART_DIAGNOSTIC_BAUD_RATES[] = { 9600, 19200, 38400, 57600, 115200 };
+static constexpr uint32_t UART_DIAGNOSTIC_START_DELAY_MS = 30000;
+static constexpr uint32_t UART_DIAGNOSTIC_ATTEMPT_MS = 10000;
+static constexpr uint32_t UART_DIAGNOSTIC_BURST_IDLE_MS = 50;
+static constexpr size_t UART_DIAGNOSTIC_MAX_BURSTS = 16;
+static constexpr size_t UART_DIAGNOSTIC_MAX_BURST_BYTES = 128;
+static constexpr size_t UART_DIAGNOSTIC_MAX_VALID_FRAMES = 8;
+static constexpr size_t UART_DIAGNOSTIC_MAX_BYTES_PER_LOOP = 512;
 
 
 void BroanComponent::setup()
@@ -20,13 +34,27 @@ void BroanComponent::setup()
   	if(flow_control_pin_)
     	this->flow_control_pin_->setup();
 
-  	if(remote_flow_control_pin_)
+	if(remote_flow_control_pin_)
     	this->remote_flow_control_pin_->setup();
+
+	m_unUartDiagnosticBootAt = millis();
+
+	if( m_bUartDiagnosticMode )
+	{
+		ESP_LOGW("broan", "Broan UART diagnostic mode enabled. Normal HRV control and pass-through are disabled.");
+		ESP_LOGW("broan", "UART diagnostic will start automatically in %ums.", UART_DIAGNOSTIC_START_DELAY_MS);
+	}
 }
 
 
 void BroanComponent::loop()
 {
+	if( m_bUartDiagnosticMode )
+	{
+		processUartDiagnostic();
+		return;
+	}
+
 	if( isPassThroughEnabled() )
 	{
 		processPassThrough();
@@ -50,6 +78,7 @@ void BroanComponent::dump_config()
 {
 	ESP_LOGCONFIG("broan", "Broan:");
 	ESP_LOGCONFIG("broan", "Pass-through mode: %s", isPassThroughEnabled() ? "enabled" : "disabled" );
+	ESP_LOGCONFIG("broan", "UART diagnostic mode: %s", m_bUartDiagnosticMode ? "enabled" : "disabled" );
 	if(flow_control_pin_)
 	{
 		char buffer[255];
@@ -374,6 +403,435 @@ void BroanComponent::handleRemotePassThroughFrame(const BroanFrame &frame)
 
 	if( frame.m_nTarget == m_nServerAddress && !frame.m_vecMessage.empty() && frame.m_vecMessage[0] == 0x03 )
 		m_bWaitForRemote = false;
+}
+
+void BroanComponent::processUartDiagnostic()
+{
+	if( m_bUartDiagnosticFinished )
+		return;
+
+	uint32_t now = millis();
+	if( now - m_unUartDiagnosticBootAt < UART_DIAGNOSTIC_START_DELAY_MS )
+		return;
+
+	if( !m_bUartDiagnosticAttemptActive )
+		startUartDiagnosticAttempt();
+
+	processDiagnosticUart( this->parent_, m_HrvDiagnosticStats, "HRV" );
+	processDiagnosticUart( this->remote_uart_, m_RemoteDiagnosticStats, "remote" );
+
+	if( hasDiagnosticSuccess() )
+	{
+		finishUartDiagnosticAttempt( true );
+		return;
+	}
+
+	if( now - m_unUartDiagnosticAttemptStartedAt >= UART_DIAGNOSTIC_ATTEMPT_MS )
+		finishUartDiagnosticAttempt( false );
+}
+
+void BroanComponent::startUartDiagnosticAttempt()
+{
+	uint32_t baud = UART_DIAGNOSTIC_BAUD_RATES[m_unUartDiagnosticBaudIndex];
+	m_unUartDiagnosticAttemptCount++;
+	m_unUartDiagnosticAttemptStartedAt = millis();
+	m_bUartDiagnosticAttemptActive = true;
+
+	resetDiagnosticStats( m_HrvDiagnosticStats );
+	resetDiagnosticStats( m_RemoteDiagnosticStats );
+
+	ESP_LOGW("broan", "================ BROAN UART DIAGNOSTIC ATTEMPT %u ================", static_cast<unsigned>( m_unUartDiagnosticAttemptCount ) );
+	ESP_LOGW("broan", "Trying baud_rate=%u, inverted=%s for %ums", static_cast<unsigned>( baud ), m_bUartDiagnosticInverted ? "true" : "false", UART_DIAGNOSTIC_ATTEMPT_MS );
+	ESP_LOGW("broan", "Both configured UARTs are tested independently; one valid side is enough to stop.");
+
+	configureDiagnosticUart( this->parent_, baud, m_bUartDiagnosticInverted, "HRV" );
+	configureDiagnosticUart( this->remote_uart_, baud, m_bUartDiagnosticInverted, "remote" );
+}
+
+void BroanComponent::finishUartDiagnosticAttempt(bool success)
+{
+	if( !m_bUartDiagnosticAttemptActive )
+		return;
+
+	finalizeDiagnosticBurst( m_HrvDiagnosticStats );
+	finalizeDiagnosticBurst( m_RemoteDiagnosticStats );
+	logDiagnosticReport( success );
+
+	m_bUartDiagnosticAttemptActive = false;
+
+	if( success )
+	{
+		const char *label = nullptr;
+		const BroanFrame *frame = firstDiagnosticFrame( &label );
+		uint32_t baud = UART_DIAGNOSTIC_BAUD_RATES[m_unUartDiagnosticBaudIndex];
+
+		ESP_LOGW("broan", "################ BROAN UART DIAGNOSTIC SUCCESS ################");
+		ESP_LOGW("broan", "Use baud_rate=%u and tx_pin/rx_pin inverted=%s", static_cast<unsigned>( baud ), m_bUartDiagnosticInverted ? "true" : "false" );
+
+		if( frame )
+		{
+			uint8_t type = frame->m_vecMessage.empty() ? 0xFF : frame->m_vecMessage[0];
+			std::string raw = formatBytes( frame->m_vecRaw );
+			std::string message = formatBytes( frame->m_vecMessage );
+			ESP_LOGW("broan", "Valid side=%s, target=0x%02X, sender=0x%02X, message_type=0x%02X, client_address_candidate=0x%02X",
+				label ? label : "unknown",
+				frame->m_nTarget,
+				frame->m_nSender,
+				type,
+				inferClientAddress( *frame ) );
+			ESP_LOGW("broan", "Valid raw frame: %s", raw.c_str() );
+			ESP_LOGW("broan", "Valid message: %s", message.c_str() );
+		}
+
+		ESP_LOGW("broan", "UART diagnostic mode is now stopped. Disable uart_diagnostic after copying the working config.");
+		m_bUartDiagnosticFinished = true;
+		return;
+	}
+
+	advanceUartDiagnosticAttempt();
+}
+
+void BroanComponent::advanceUartDiagnosticAttempt()
+{
+	if( !m_bUartDiagnosticInverted )
+	{
+		m_bUartDiagnosticInverted = true;
+		return;
+	}
+
+	m_bUartDiagnosticInverted = false;
+	m_unUartDiagnosticBaudIndex++;
+	if( m_unUartDiagnosticBaudIndex < sizeof(UART_DIAGNOSTIC_BAUD_RATES) / sizeof(UART_DIAGNOSTIC_BAUD_RATES[0]) )
+		return;
+
+	m_unUartDiagnosticBaudIndex = 0;
+	ESP_LOGW("broan", "################################################################");
+	ESP_LOGW("broan", "### BROAN UART DIAGNOSTIC: ALL BAUD/POLARITY ATTEMPTS FAILED ###");
+	ESP_LOGW("broan", "### CYCLING BACK TO 9600 BAUD NOW                            ###");
+	ESP_LOGW("broan", "################################################################");
+}
+
+void BroanComponent::configureDiagnosticUart(uart::UARTComponent *uart, uint32_t baud, bool inverted, const char *label)
+{
+	if( !uart )
+	{
+		ESP_LOGW("broan", "Diagnostic %s UART: not configured", label );
+		return;
+	}
+
+	uart->set_baud_rate( baud );
+#if defined(USE_ESP32) || defined(USE_ESP8266)
+	uart->load_settings( false );
+#endif
+
+#ifdef USE_ESP32
+	auto *idf_uart = static_cast<uart::IDFUARTComponent *>( uart );
+	uint32_t invert_mask = inverted ? ( UART_SIGNAL_TXD_INV | UART_SIGNAL_RXD_INV ) : 0;
+	esp_err_t err = uart_set_line_inverse( static_cast<uart_port_t>( idf_uart->get_hw_serial_number() ), invert_mask );
+	if( err != ESP_OK )
+		ESP_LOGW("broan", "Diagnostic %s UART: uart_set_line_inverse failed: %s", label, esp_err_to_name(err) );
+#else
+	if( inverted )
+		ESP_LOGW("broan", "Diagnostic %s UART: runtime inversion is only implemented for ESP32", label );
+#endif
+
+	drainDiagnosticUart( uart );
+	ESP_LOGW("broan", "Diagnostic %s UART configured: baud_rate=%u, inverted=%s", label, static_cast<unsigned>( baud ), inverted ? "true" : "false" );
+}
+
+void BroanComponent::drainDiagnosticUart(uart::UARTComponent *uart)
+{
+	if( !uart )
+		return;
+
+	uint8_t discard;
+	size_t drained = 0;
+	while( uart->available() > 0 && drained < 1024 )
+	{
+		if( !uart->read_byte( &discard ) )
+			break;
+		drained++;
+	}
+}
+
+void BroanComponent::resetDiagnosticStats(BroanDiagnosticSideStats &stats)
+{
+	stats.m_bReceivedData = false;
+	stats.m_unByteCount = 0;
+	stats.m_unInvalidStartBytes = 0;
+	stats.m_unInvalidFrameCount = 0;
+	stats.m_unDroppedBurstCount = 0;
+	stats.m_vecBursts.clear();
+	stats.m_CurrentBurst = BroanDiagnosticBurst{};
+	stats.m_unLastByteAt = 0;
+	stats.m_vecFrameBuffer.clear();
+	stats.m_unValidFrameCount = 0;
+	stats.m_vecValidFrames.clear();
+}
+
+void BroanComponent::finalizeDiagnosticBurst(BroanDiagnosticSideStats &stats)
+{
+	if( stats.m_CurrentBurst.m_vecBytes.empty() )
+		return;
+
+	if( stats.m_vecBursts.size() < UART_DIAGNOSTIC_MAX_BURSTS )
+		stats.m_vecBursts.push_back( stats.m_CurrentBurst );
+	else
+		stats.m_unDroppedBurstCount++;
+
+	stats.m_CurrentBurst = BroanDiagnosticBurst{};
+}
+
+void BroanComponent::processDiagnosticUart(uart::UARTComponent *uart, BroanDiagnosticSideStats &stats, const char *label)
+{
+	if( !uart )
+		return;
+
+	uint32_t now = millis();
+	if( !stats.m_CurrentBurst.m_vecBytes.empty() && now - stats.m_unLastByteAt >= UART_DIAGNOSTIC_BURST_IDLE_MS )
+		finalizeDiagnosticBurst( stats );
+
+	size_t processed = 0;
+	while( uart->available() > 0 && processed < UART_DIAGNOSTIC_MAX_BYTES_PER_LOOP )
+	{
+		uint8_t value;
+		if( !uart->read_byte( &value ) )
+			break;
+
+		BroanFrame frame;
+		if( processDiagnosticByte( stats, value, frame ) )
+		{
+			stats.m_unValidFrameCount++;
+			if( stats.m_vecValidFrames.size() < UART_DIAGNOSTIC_MAX_VALID_FRAMES )
+				stats.m_vecValidFrames.push_back( frame );
+			ESP_LOGW("broan", "Diagnostic %s UART: valid Broan frame found", label );
+		}
+
+		processed++;
+	}
+}
+
+bool BroanComponent::processDiagnosticByte(BroanDiagnosticSideStats &stats, uint8_t value, BroanFrame &frame)
+{
+	uint32_t now = millis();
+	if( !stats.m_CurrentBurst.m_vecBytes.empty() && now - stats.m_unLastByteAt >= UART_DIAGNOSTIC_BURST_IDLE_MS )
+		finalizeDiagnosticBurst( stats );
+
+	stats.m_bReceivedData = true;
+	stats.m_unByteCount++;
+	stats.m_unLastByteAt = now;
+
+	if( stats.m_CurrentBurst.m_vecBytes.size() < UART_DIAGNOSTIC_MAX_BURST_BYTES )
+	{
+		stats.m_CurrentBurst.m_vecBytes.push_back( value );
+	}
+	else
+	{
+		stats.m_CurrentBurst.m_bTruncated = true;
+		stats.m_CurrentBurst.m_unOmittedBytes++;
+	}
+
+	if( stats.m_vecFrameBuffer.empty() && value != 0x01 )
+	{
+		stats.m_unInvalidStartBytes++;
+		return false;
+	}
+
+	stats.m_vecFrameBuffer.push_back( value );
+	size_t pos = stats.m_vecFrameBuffer.size() - 1;
+
+	if( ( pos == 1 || pos == 2 ) && value > 32 )
+	{
+		stats.m_unInvalidFrameCount++;
+		stats.m_vecFrameBuffer.clear();
+		return false;
+	}
+
+	if( pos == 3 && value != 0x01 )
+	{
+		stats.m_unInvalidFrameCount++;
+		stats.m_vecFrameBuffer.clear();
+		return false;
+	}
+
+	if( stats.m_vecFrameBuffer.size() < 5 )
+		return false;
+
+	size_t len = stats.m_vecFrameBuffer[4];
+	size_t total = 5 + len + 2;
+	if( stats.m_vecFrameBuffer.size() < total )
+		return false;
+
+	if( stats.m_vecFrameBuffer[total - 1] != 0x04 )
+	{
+		stats.m_unInvalidFrameCount++;
+		stats.m_vecFrameBuffer.clear();
+		return false;
+	}
+
+	std::vector<uint8_t> message(
+		stats.m_vecFrameBuffer.begin() + 5,
+		stats.m_vecFrameBuffer.begin() + 5 + len
+	);
+
+	uint8_t checksum = stats.m_vecFrameBuffer[5 + len];
+	uint8_t expected_checksum = calculateChecksum( stats.m_vecFrameBuffer[2], stats.m_vecFrameBuffer[1], message );
+	if( checksum != expected_checksum )
+	{
+		stats.m_unInvalidFrameCount++;
+		stats.m_vecFrameBuffer.clear();
+		return false;
+	}
+
+	frame.m_nTarget = stats.m_vecFrameBuffer[1];
+	frame.m_nSender = stats.m_vecFrameBuffer[2];
+	frame.m_vecMessage = message;
+	frame.m_vecRaw = stats.m_vecFrameBuffer;
+	stats.m_vecFrameBuffer.clear();
+
+	return true;
+}
+
+bool BroanComponent::hasDiagnosticSuccess() const
+{
+	return m_HrvDiagnosticStats.m_unValidFrameCount > 0 || m_RemoteDiagnosticStats.m_unValidFrameCount > 0;
+}
+
+const BroanFrame* BroanComponent::firstDiagnosticFrame(const BroanDiagnosticSideStats &stats) const
+{
+	if( stats.m_vecValidFrames.empty() )
+		return nullptr;
+	return &stats.m_vecValidFrames.front();
+}
+
+const BroanFrame* BroanComponent::firstDiagnosticFrame(const char **label) const
+{
+	const BroanFrame *frame = firstDiagnosticFrame( m_HrvDiagnosticStats );
+	if( frame )
+	{
+		if( label )
+			*label = "HRV";
+		return frame;
+	}
+
+	frame = firstDiagnosticFrame( m_RemoteDiagnosticStats );
+	if( frame && label )
+		*label = "remote";
+
+	return frame;
+}
+
+uint8_t BroanComponent::inferClientAddress(const BroanFrame &frame) const
+{
+	if( frame.m_nSender == m_nServerAddress )
+		return frame.m_nTarget;
+	if( frame.m_nTarget == m_nServerAddress )
+		return frame.m_nSender;
+	return frame.m_nTarget;
+}
+
+void BroanComponent::logDiagnosticReport(bool success)
+{
+	uint32_t baud = UART_DIAGNOSTIC_BAUD_RATES[m_unUartDiagnosticBaudIndex];
+	ESP_LOGW("broan", "---------------- BROAN UART DIAGNOSTIC REPORT ----------------");
+	ESP_LOGW("broan", "Attempt %u result=%s baud_rate=%u inverted=%s elapsed=%ums",
+		static_cast<unsigned>( m_unUartDiagnosticAttemptCount ),
+		success ? "VALID FRAME FOUND" : "no valid frame",
+		static_cast<unsigned>( baud ),
+		m_bUartDiagnosticInverted ? "true" : "false",
+		static_cast<unsigned>( millis() - m_unUartDiagnosticAttemptStartedAt ) );
+
+	logDiagnosticSideReport( "HRV", m_HrvDiagnosticStats );
+	if( remote_uart_ )
+		logDiagnosticSideReport( "remote", m_RemoteDiagnosticStats );
+	else
+		ESP_LOGW("broan", "remote side: UART not configured");
+
+	ESP_LOGW("broan", "----------------------------------------------------------------");
+}
+
+void BroanComponent::logDiagnosticSideReport(const char *label, const BroanDiagnosticSideStats &stats)
+{
+	ESP_LOGW("broan", "%s side: data_received=%s bytes=%u valid_frames=%u invalid_start_bytes=%u invalid_frames=%u bursts=%u dropped_bursts=%u",
+		label,
+		stats.m_bReceivedData ? "yes" : "no",
+		static_cast<unsigned>( stats.m_unByteCount ),
+		static_cast<unsigned>( stats.m_unValidFrameCount ),
+		static_cast<unsigned>( stats.m_unInvalidStartBytes ),
+		static_cast<unsigned>( stats.m_unInvalidFrameCount ),
+		static_cast<unsigned>( stats.m_vecBursts.size() ),
+		static_cast<unsigned>( stats.m_unDroppedBurstCount ) );
+
+	for( size_t i=0; i<stats.m_vecBursts.size(); i++ )
+	{
+		const BroanDiagnosticBurst &burst = stats.m_vecBursts[i];
+		std::string hex = formatBytes( burst.m_vecBytes );
+		if( burst.m_bTruncated )
+		{
+			ESP_LOGW("broan", "%s burst %u: bytes=%u truncated omitted=%u bytes",
+				label,
+				static_cast<unsigned>( i + 1 ),
+				static_cast<unsigned>( burst.m_vecBytes.size() ),
+				static_cast<unsigned>( burst.m_unOmittedBytes ) );
+		}
+		else
+		{
+			ESP_LOGW("broan", "%s burst %u: bytes=%u",
+				label,
+				static_cast<unsigned>( i + 1 ),
+				static_cast<unsigned>( burst.m_vecBytes.size() ) );
+		}
+		ESP_LOGW("broan", "%s burst %u hex: %s", label, static_cast<unsigned>( i + 1 ), hex.c_str() );
+	}
+
+	if( !stats.m_vecFrameBuffer.empty() )
+	{
+		std::string partial = formatBytes( stats.m_vecFrameBuffer );
+		ESP_LOGW("broan", "%s partial frame candidate: %s", label, partial.c_str() );
+	}
+
+	for( size_t i=0; i<stats.m_vecValidFrames.size(); i++ )
+	{
+		const BroanFrame &frame = stats.m_vecValidFrames[i];
+		uint8_t type = frame.m_vecMessage.empty() ? 0xFF : frame.m_vecMessage[0];
+		std::string raw = formatBytes( frame.m_vecRaw );
+		std::string message = formatBytes( frame.m_vecMessage );
+		ESP_LOGW("broan", "%s valid frame %u: target=0x%02X sender=0x%02X type=0x%02X client_address_candidate=0x%02X",
+			label,
+			static_cast<unsigned>( i + 1 ),
+			frame.m_nTarget,
+			frame.m_nSender,
+			type,
+			inferClientAddress( frame ) );
+		ESP_LOGW("broan", "%s valid frame %u raw: %s", label, static_cast<unsigned>( i + 1 ), raw.c_str() );
+		ESP_LOGW("broan", "%s valid frame %u message: %s", label, static_cast<unsigned>( i + 1 ), message.c_str() );
+	}
+
+	if( stats.m_unValidFrameCount > stats.m_vecValidFrames.size() )
+	{
+		ESP_LOGW("broan", "%s valid frames stored first %u of %u",
+			label,
+			static_cast<unsigned>( stats.m_vecValidFrames.size() ),
+			static_cast<unsigned>( stats.m_unValidFrameCount ) );
+	}
+}
+
+std::string BroanComponent::formatBytes(const std::vector<uint8_t> &bytes) const
+{
+	if( bytes.empty() )
+		return "(empty)";
+
+	std::string out;
+	out.reserve( bytes.size() * 3 );
+	for( size_t i=0; i<bytes.size(); i++ )
+	{
+		char buffer[4];
+		snprintf( buffer, sizeof(buffer), "%02X", bytes[i] );
+		if( i > 0 )
+			out += ' ';
+		out += buffer;
+	}
+	return out;
 }
 
 void esp_log_vector_hex(const char* tag, const std::vector<uint8_t>& message) {
