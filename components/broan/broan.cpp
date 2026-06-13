@@ -16,6 +16,7 @@ static constexpr size_t UART_DIAGNOSTIC_MAX_BURSTS = 16;
 static constexpr size_t UART_DIAGNOSTIC_MAX_BURST_BYTES = 128;
 static constexpr size_t UART_DIAGNOSTIC_MAX_VALID_FRAMES = 8;
 static constexpr size_t UART_DIAGNOSTIC_MAX_BYTES_PER_LOOP = 512;
+static constexpr uint32_t UART_DIAGNOSTIC_PASS_THROUGH_REPORT_MS = 10000;
 
 
 void BroanComponent::setup()
@@ -416,20 +417,86 @@ void BroanComponent::processUartDiagnostic()
 	if( now - m_unUartDiagnosticBootAt < UART_DIAGNOSTIC_START_DELAY_MS )
 		return;
 
+	if( m_bUartDiagnosticPassThroughMode )
+	{
+		processUartDiagnosticPassThrough();
+		return;
+	}
+
 	if( !m_bUartDiagnosticAttemptActive )
 		startUartDiagnosticAttempt();
 
-	processDiagnosticUart( this->parent_, m_HrvDiagnosticStats, "HRV" );
-	processDiagnosticUart( this->remote_uart_, m_RemoteDiagnosticStats, "remote" );
+	processDiagnosticUart( this->parent_, m_HrvDiagnosticStats, "HRV", DiagnosticSideHrv, false );
+	processDiagnosticUart( this->remote_uart_, m_RemoteDiagnosticStats, "remote", DiagnosticSideRemote, false );
 
 	if( hasDiagnosticSuccess() )
 	{
-		finishUartDiagnosticAttempt( true );
+		enterUartDiagnosticPassThroughMode();
+		processUartDiagnosticPassThrough();
 		return;
 	}
 
 	if( now - m_unUartDiagnosticAttemptStartedAt >= UART_DIAGNOSTIC_ATTEMPT_MS )
 		finishUartDiagnosticAttempt( false );
+}
+
+void BroanComponent::enterUartDiagnosticPassThroughMode()
+{
+	if( m_bUartDiagnosticPassThroughMode )
+		return;
+
+	finalizeDiagnosticBurst( m_HrvDiagnosticStats );
+	finalizeDiagnosticBurst( m_RemoteDiagnosticStats );
+	logDiagnosticReport( true );
+
+	BroanDiagnosticSide side = DiagnosticSideNone;
+	const BroanFrame *frame = firstDiagnosticFrame( &side );
+	uint32_t baud = UART_DIAGNOSTIC_BAUD_RATES[m_unUartDiagnosticBaudIndex];
+
+	m_bUartDiagnosticPassThroughMode = true;
+	m_bUartDiagnosticAttemptActive = false;
+	m_UartDiagnosticFirstValidSide = side;
+	m_unUartDiagnosticPassThroughStartedAt = millis();
+	m_unUartDiagnosticLastPassThroughReportAt = m_unUartDiagnosticPassThroughStartedAt;
+	m_unUartDiagnosticHrvForwardedFrames = 0;
+	m_unUartDiagnosticRemoteForwardedFrames = 0;
+
+	if( frame )
+	{
+		m_nUartDiagnosticCandidateClientAddress = inferClientAddress( *frame );
+		m_bUartDiagnosticCandidateClientAddressValid = true;
+	}
+
+	ESP_LOGW("broan", "################ BROAN UART DIAGNOSTIC FIRST VALID SIDE ################");
+	ESP_LOGW("broan", "Pinned UART config: baud_rate=%u, inverted=%s", static_cast<unsigned>( baud ), m_bUartDiagnosticInverted ? "true" : "false" );
+	if( m_bUartDiagnosticCandidateClientAddressValid )
+		ESP_LOGW("broan", "Candidate client address: 0x%02X", m_nUartDiagnosticCandidateClientAddress );
+	ESP_LOGW("broan", "First valid side: %s", diagnosticSideLabel( side ) );
+	ESP_LOGW("broan", "Continuing in diagnostic pass-through mode until both UART sides carry valid frames.");
+	if( !remote_uart_ )
+		ESP_LOGW("broan", "Remote UART is not configured, so complete pass-through validation cannot finish.");
+
+	forwardDiagnosticStoredFrames( DiagnosticSideHrv );
+	forwardDiagnosticStoredFrames( DiagnosticSideRemote );
+}
+
+void BroanComponent::processUartDiagnosticPassThrough()
+{
+	processDiagnosticUart( this->parent_, m_HrvDiagnosticStats, "HRV", DiagnosticSideHrv, true );
+	processDiagnosticUart( this->remote_uart_, m_RemoteDiagnosticStats, "remote", DiagnosticSideRemote, true );
+
+	if( hasDiagnosticPassThroughSuccess() )
+	{
+		finishUartDiagnosticPassThroughSuccess();
+		return;
+	}
+
+	uint32_t now = millis();
+	if( now - m_unUartDiagnosticLastPassThroughReportAt >= UART_DIAGNOSTIC_PASS_THROUGH_REPORT_MS )
+	{
+		m_unUartDiagnosticLastPassThroughReportAt = now;
+		logDiagnosticPassThroughStatus();
+	}
 }
 
 void BroanComponent::startUartDiagnosticAttempt()
@@ -438,6 +505,11 @@ void BroanComponent::startUartDiagnosticAttempt()
 	m_unUartDiagnosticAttemptCount++;
 	m_unUartDiagnosticAttemptStartedAt = millis();
 	m_bUartDiagnosticAttemptActive = true;
+	m_bUartDiagnosticCandidateClientAddressValid = false;
+	m_nUartDiagnosticCandidateClientAddress = 0;
+	m_UartDiagnosticFirstValidSide = DiagnosticSideNone;
+	m_unUartDiagnosticHrvForwardedFrames = 0;
+	m_unUartDiagnosticRemoteForwardedFrames = 0;
 
 	resetDiagnosticStats( m_HrvDiagnosticStats );
 	resetDiagnosticStats( m_RemoteDiagnosticStats );
@@ -491,6 +563,30 @@ void BroanComponent::finishUartDiagnosticAttempt(bool success)
 	}
 
 	advanceUartDiagnosticAttempt();
+}
+
+void BroanComponent::finishUartDiagnosticPassThroughSuccess()
+{
+	if( m_bUartDiagnosticFinished )
+		return;
+
+	finalizeDiagnosticBurst( m_HrvDiagnosticStats );
+	finalizeDiagnosticBurst( m_RemoteDiagnosticStats );
+	logDiagnosticReport( true );
+
+	uint32_t baud = UART_DIAGNOSTIC_BAUD_RATES[m_unUartDiagnosticBaudIndex];
+
+	ESP_LOGW("broan", "################ BROAN UART PASS-THROUGH DIAGNOSTIC SUCCESS ################");
+	ESP_LOGW("broan", "Both UART sides received valid Broan frames and frames were forwarded in both directions.");
+	ESP_LOGW("broan", "Use baud_rate=%u and tx_pin/rx_pin inverted=%s", static_cast<unsigned>( baud ), m_bUartDiagnosticInverted ? "true" : "false" );
+	if( m_bUartDiagnosticCandidateClientAddressValid )
+		ESP_LOGW("broan", "Use client_address: 0x%02X", m_nUartDiagnosticCandidateClientAddress );
+	ESP_LOGW("broan", "Forwarded HRV->remote frames=%u, remote->HRV frames=%u",
+		static_cast<unsigned>( m_unUartDiagnosticHrvForwardedFrames ),
+		static_cast<unsigned>( m_unUartDiagnosticRemoteForwardedFrames ) );
+	ESP_LOGW("broan", "UART diagnostic mode is now stopped. Disable uart_diagnostic after copying the working config.");
+
+	m_bUartDiagnosticFinished = true;
 }
 
 void BroanComponent::advanceUartDiagnosticAttempt()
@@ -584,7 +680,7 @@ void BroanComponent::finalizeDiagnosticBurst(BroanDiagnosticSideStats &stats)
 	stats.m_CurrentBurst = BroanDiagnosticBurst{};
 }
 
-void BroanComponent::processDiagnosticUart(uart::UARTComponent *uart, BroanDiagnosticSideStats &stats, const char *label)
+void BroanComponent::processDiagnosticUart(uart::UARTComponent *uart, BroanDiagnosticSideStats &stats, const char *label, BroanDiagnosticSide side, bool forward_valid_frames)
 {
 	if( !uart )
 		return;
@@ -607,6 +703,8 @@ void BroanComponent::processDiagnosticUart(uart::UARTComponent *uart, BroanDiagn
 			if( stats.m_vecValidFrames.size() < UART_DIAGNOSTIC_MAX_VALID_FRAMES )
 				stats.m_vecValidFrames.push_back( frame );
 			ESP_LOGW("broan", "Diagnostic %s UART: valid Broan frame found", label );
+			if( forward_valid_frames )
+				forwardDiagnosticFrame( side, frame );
 		}
 
 		processed++;
@@ -699,6 +797,83 @@ bool BroanComponent::hasDiagnosticSuccess() const
 	return m_HrvDiagnosticStats.m_unValidFrameCount > 0 || m_RemoteDiagnosticStats.m_unValidFrameCount > 0;
 }
 
+bool BroanComponent::hasDiagnosticPassThroughSuccess() const
+{
+	return m_HrvDiagnosticStats.m_unValidFrameCount > 0
+		&& m_RemoteDiagnosticStats.m_unValidFrameCount > 0
+		&& m_unUartDiagnosticHrvForwardedFrames > 0
+		&& m_unUartDiagnosticRemoteForwardedFrames > 0;
+}
+
+void BroanComponent::forwardDiagnosticStoredFrames(BroanDiagnosticSide side)
+{
+	const BroanDiagnosticSideStats *stats = nullptr;
+	if( side == DiagnosticSideHrv )
+		stats = &m_HrvDiagnosticStats;
+	else if( side == DiagnosticSideRemote )
+		stats = &m_RemoteDiagnosticStats;
+
+	if( !stats )
+		return;
+
+	for( const BroanFrame &frame : stats->m_vecValidFrames )
+		forwardDiagnosticFrame( side, frame );
+}
+
+void BroanComponent::forwardDiagnosticFrame(BroanDiagnosticSide side, const BroanFrame &frame)
+{
+	if( frame.m_vecRaw.empty() )
+		return;
+
+	if( side == DiagnosticSideHrv )
+	{
+		writeRawToRemote( frame.m_vecRaw );
+		m_unUartDiagnosticHrvForwardedFrames++;
+		ESP_LOGW("broan", "Diagnostic pass-through forwarded HRV->remote frame type=0x%02X target=0x%02X sender=0x%02X",
+			frame.m_vecMessage.empty() ? 0xFF : frame.m_vecMessage[0],
+			frame.m_nTarget,
+			frame.m_nSender );
+		return;
+	}
+
+	if( side == DiagnosticSideRemote )
+	{
+		writeRawToHrv( frame.m_vecRaw );
+		m_unUartDiagnosticRemoteForwardedFrames++;
+		ESP_LOGW("broan", "Diagnostic pass-through forwarded remote->HRV frame type=0x%02X target=0x%02X sender=0x%02X",
+			frame.m_vecMessage.empty() ? 0xFF : frame.m_vecMessage[0],
+			frame.m_nTarget,
+			frame.m_nSender );
+	}
+}
+
+void BroanComponent::logDiagnosticPassThroughStatus()
+{
+	ESP_LOGW("broan", "Broan UART diagnostic pass-through still waiting: first_valid_side=%s HRV_valid=%u remote_valid=%u HRV->remote=%u remote->HRV=%u elapsed=%ums",
+		diagnosticSideLabel( m_UartDiagnosticFirstValidSide ),
+		static_cast<unsigned>( m_HrvDiagnosticStats.m_unValidFrameCount ),
+		static_cast<unsigned>( m_RemoteDiagnosticStats.m_unValidFrameCount ),
+		static_cast<unsigned>( m_unUartDiagnosticHrvForwardedFrames ),
+		static_cast<unsigned>( m_unUartDiagnosticRemoteForwardedFrames ),
+		static_cast<unsigned>( millis() - m_unUartDiagnosticPassThroughStartedAt ) );
+
+	if( m_bUartDiagnosticCandidateClientAddressValid )
+		ESP_LOGW("broan", "Broan UART diagnostic candidate client address remains 0x%02X", m_nUartDiagnosticCandidateClientAddress );
+}
+
+const char* BroanComponent::diagnosticSideLabel(BroanDiagnosticSide side) const
+{
+	switch( side )
+	{
+		case DiagnosticSideHrv:
+			return "HRV";
+		case DiagnosticSideRemote:
+			return "remote";
+		default:
+			return "none";
+	}
+}
+
 const BroanFrame* BroanComponent::firstDiagnosticFrame(const BroanDiagnosticSideStats &stats) const
 {
 	if( stats.m_vecValidFrames.empty() )
@@ -719,6 +894,26 @@ const BroanFrame* BroanComponent::firstDiagnosticFrame(const char **label) const
 	frame = firstDiagnosticFrame( m_RemoteDiagnosticStats );
 	if( frame && label )
 		*label = "remote";
+
+	return frame;
+}
+
+const BroanFrame* BroanComponent::firstDiagnosticFrame(BroanDiagnosticSide *side) const
+{
+	const BroanFrame *frame = firstDiagnosticFrame( m_HrvDiagnosticStats );
+	if( frame )
+	{
+		if( side )
+			*side = DiagnosticSideHrv;
+		return frame;
+	}
+
+	frame = firstDiagnosticFrame( m_RemoteDiagnosticStats );
+	if( frame && side )
+		*side = DiagnosticSideRemote;
+
+	if( !frame && side )
+		*side = DiagnosticSideNone;
 
 	return frame;
 }

@@ -176,6 +176,13 @@ struct BroanFrameReader
 	std::vector<uint8_t> m_vecBuffer;
 };
 
+enum BroanDiagnosticSide
+{
+	DiagnosticSideNone,
+	DiagnosticSideHrv,
+	DiagnosticSideRemote,
+};
+
 struct BroanDiagnosticBurst
 {
 	std::vector<uint8_t> m_vecBytes;
@@ -356,12 +363,20 @@ private:
 
 	bool m_bUartDiagnosticMode = false;
 	bool m_bUartDiagnosticAttemptActive = false;
+	bool m_bUartDiagnosticPassThroughMode = false;
 	bool m_bUartDiagnosticFinished = false;
 	bool m_bUartDiagnosticInverted = false;
+	bool m_bUartDiagnosticCandidateClientAddressValid = false;
 	uint32_t m_unUartDiagnosticBootAt = 0;
 	uint32_t m_unUartDiagnosticAttemptStartedAt = 0;
 	uint32_t m_unUartDiagnosticAttemptCount = 0;
+	uint32_t m_unUartDiagnosticPassThroughStartedAt = 0;
+	uint32_t m_unUartDiagnosticLastPassThroughReportAt = 0;
+	uint32_t m_unUartDiagnosticHrvForwardedFrames = 0;
+	uint32_t m_unUartDiagnosticRemoteForwardedFrames = 0;
 	size_t m_unUartDiagnosticBaudIndex = 0;
+	uint8_t m_nUartDiagnosticCandidateClientAddress = 0;
+	BroanDiagnosticSide m_UartDiagnosticFirstValidSide = DiagnosticSideNone;
 	BroanDiagnosticSideStats m_HrvDiagnosticStats;
 	BroanDiagnosticSideStats m_RemoteDiagnosticStats;
 
@@ -380,18 +395,27 @@ private:
 	bool shouldTakePrivateGrant(const BroanFrame &frame) const;
 	bool isPassThroughEnabled() const { return this->remote_uart_ != nullptr; }
 	void processUartDiagnostic();
+	void enterUartDiagnosticPassThroughMode();
+	void processUartDiagnosticPassThrough();
 	void startUartDiagnosticAttempt();
 	void finishUartDiagnosticAttempt(bool success);
+	void finishUartDiagnosticPassThroughSuccess();
 	void advanceUartDiagnosticAttempt();
 	void configureDiagnosticUart(uart::UARTComponent *uart, uint32_t baud, bool inverted, const char *label);
 	void drainDiagnosticUart(uart::UARTComponent *uart);
 	void resetDiagnosticStats(BroanDiagnosticSideStats &stats);
 	void finalizeDiagnosticBurst(BroanDiagnosticSideStats &stats);
-	void processDiagnosticUart(uart::UARTComponent *uart, BroanDiagnosticSideStats &stats, const char *label);
+	void processDiagnosticUart(uart::UARTComponent *uart, BroanDiagnosticSideStats &stats, const char *label, BroanDiagnosticSide side, bool forward_valid_frames);
 	bool processDiagnosticByte(BroanDiagnosticSideStats &stats, uint8_t value, BroanFrame &frame);
 	bool hasDiagnosticSuccess() const;
+	bool hasDiagnosticPassThroughSuccess() const;
+	void forwardDiagnosticStoredFrames(BroanDiagnosticSide side);
+	void forwardDiagnosticFrame(BroanDiagnosticSide side, const BroanFrame &frame);
+	void logDiagnosticPassThroughStatus();
+	const char* diagnosticSideLabel(BroanDiagnosticSide side) const;
 	const BroanFrame* firstDiagnosticFrame(const BroanDiagnosticSideStats &stats) const;
 	const BroanFrame* firstDiagnosticFrame(const char **label) const;
+	const BroanFrame* firstDiagnosticFrame(BroanDiagnosticSide *side) const;
 	uint8_t inferClientAddress(const BroanFrame &frame) const;
 	void logDiagnosticReport(bool success);
 	void logDiagnosticSideReport(const char *label, const BroanDiagnosticSideStats &stats);

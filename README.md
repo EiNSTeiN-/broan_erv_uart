@@ -58,6 +58,9 @@ Some units use a client address other than the default `0x12`. If UART diagnosti
 
 See [examples/pass_through_example.yaml](./examples/pass_through_example.yaml) for a two-UART configuration.
 
+## UART diagnostic mode
+Set `uart_diagnostic: true` under `broan:` to scan common baud rates and UART polarity after boot. The diagnostic waits 30 seconds, tries each baud with normal and inverted signaling, and reports raw byte bursts and valid Broan frames. Once one side has a valid frame, it pins that UART configuration, forwards frames between the HRV and remote UARTs, and stops only after both sides have received valid frames and traffic has been forwarded in both directions. Disable this option after copying the reported `baud_rate`, `inverted`, and `client_address` values into the normal config.
+
 ## FAQ
 Q: I see errors about failed communication
 
