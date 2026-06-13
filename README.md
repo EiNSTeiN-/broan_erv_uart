@@ -35,8 +35,8 @@ Some rs485 trancevers have a jumper for the terminating resistor, some do not. I
 Also be aware some RS485 devices will label their pins A and B instead of D+ and D-. Somewhat confusingly, A is D- and B is D+
 
 ## Supported features
-* Setting fan mode (Standby, Min, Max, Intermittent, Turbo, Override, and Med, which is treated as manual control)
-* Setting fan speed in manual mode
+* Setting fan mode (Standby, Min, Medium, Max, Intermittent, Turbo, and Override)
+* Setting fan speed in medium mode
 * Humidity control mode
 * Intake temperature
 * Filter life left
@@ -138,6 +138,8 @@ A: Not everything is actually exposed via the rs485 interface. I may need dumps 
 Q: What if I still want wall controls?
 
 A: Use pass-through mode with two RS485 ports if you want to keep the serial wall remote. Aux remotes using the dry-contact interface also work as hard overrides; the fan mode will indicate "ovr" (override) when these controls are used.
+
+The `ovr` fan mode is a reported state, not a normal commandable mode. If it appears in Home Assistant, change modes from the wall control or choose another fan mode; the component ignores requests to write `ovr` back to the HRV.
 
 ### ESPhome yaml
 Add this to an existing config.

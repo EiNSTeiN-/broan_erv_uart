@@ -33,7 +33,7 @@ async def to_code(config):
                 "min",
                 "max",
                 "int",
-                "manual",
+                "medium",
                 "turbo",
                 "humidity",
                 "recirculate",

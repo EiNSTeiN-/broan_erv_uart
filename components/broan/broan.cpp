@@ -1346,7 +1346,7 @@ void BroanComponent::parseBroanFields(const std::vector<uint8_t>& message)
 					case BroanFanMode::Intermittent: strMode = "int"; break;
 					case BroanFanMode::Min: strMode = "min"; break;
 					case BroanFanMode::Max: strMode = "max"; break;
-					case BroanFanMode::Manual: strMode = "manual"; break;
+					case BroanFanMode::Medium: strMode = "medium"; break;
 					case BroanFanMode::Turbo: strMode = "turbo"; break;
 					case BroanFanMode::Humidity: strMode = "humidity"; break;
 					case BroanFanMode::Recirculate: strMode = "recirculate"; break;

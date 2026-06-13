@@ -79,7 +79,8 @@ enum BroanFanMode
 	Min = 0x09,
 	Max = 0x0a,
 	Smart = 0x11,
-	Manual = 0x0b,
+	Medium = 0x0b,
+	Manual = Medium,
 	Turbo = 0x0c,
 	Humidity = 0x0d,
 	Away = 0x0F, // "OTH", no idea what this actually does?
@@ -124,6 +125,8 @@ enum BroanField
 	// Unknown fields that look interesting but aren't understood nor read by controllers
 	UnknownA,
 	UnknownB,
+	UnknownControllerA,
+	UnknownControllerB,
 
 	MAX_FIELDS,
 };
@@ -284,6 +287,8 @@ public:
 		// Interesting fields found by scan
 		{ 0x08, 0xE0, BroanFieldType::Float, {0}, UPDATE_RATE_NEVER }, // Unknown. Seems to change a lot. 38.943115 / 1109116352 (Does not correlate with fan speed)
 		{ 0x09, 0xE0, BroanFieldType::Float, {0}, UPDATE_RATE_NEVER }, // Unknown. Seems to change a lot. 36.360962 / 1108439456 (Same as above)
+		{ 0x07, 0x50, BroanFieldType::Int, {0}, UPDATE_RATE_NEVER }, // Unknown. Wall controllers regularly write this. VTSPEEDW often sets this to -1.
+		{ 0x03, 0x20, BroanFieldType::Byte, {0}, UPDATE_RATE_NEVER }, // Unknown. Wall controllers update this during fan-mode changes.
 
 /*
 		// Unknown fields scanned by the VTSPEEDW
@@ -303,8 +308,6 @@ public:
 		{ 0x17, 0x00, BroanFieldType::Int, {0} }, // Unknown. NaN / ffffffff
 		{ 0x00, 0x30, BroanFieldType::Byte, {0} }, // Unknown. 0 / 00
 		{ 0x00, 0x22, BroanFieldType::Int, {0} }, // Unknown. 14400 / 40380000
-		{ 0x07, 0x50, BroanFieldType::Int, {0} }, // Unknown. VTSPEEDW often sets this to -1
-		{ 0x03, 0x20, BroanFieldType::Byte, {0} }, // Unknown. Set to 0 when entering INT mode
 		{ 0x08, 0x20, BroanFieldType::Byte, {0} }, // Unknown. Set to 0 when entering SMART mode, set to 1 in continuous modes.
 */
 	};

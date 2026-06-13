@@ -11,8 +11,8 @@ void BroanComponent::setFanMode( std::string mode )
 		value = BroanFanMode::Min;
 	else if (mode == "max" )
 		value = BroanFanMode::Max;
-	else if( mode == "manual" )
-		value = BroanFanMode::Manual;
+	else if( mode == "medium" || mode == "manual" )
+		value = BroanFanMode::Medium;
 	else if( mode == "int" )
 		value = BroanFanMode::Intermittent;
 	else if( mode == "turbo" )
@@ -20,7 +20,11 @@ void BroanComponent::setFanMode( std::string mode )
 	else if( mode == "humidity" )
 		value = BroanFanMode::Humidity;
 	else if( mode == "ovr" )
-		value = BroanFanMode::Ovr;
+	{
+		ESP_LOGW("broan", "Ignoring request to set fan mode to ovr; override is a report-only state from external controls");
+		m_vecFields[FanMode].markDirty();
+		return;
+	}
 	else if( mode == "recirculate" )
 		value = BroanFanMode::Recirculate;
 	else
