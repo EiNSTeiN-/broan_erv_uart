@@ -450,7 +450,7 @@ void BroanComponent::enterUartDiagnosticPassThroughMode()
 	logDiagnosticReport( true );
 
 	BroanDiagnosticSide side = DiagnosticSideNone;
-	const BroanFrame *frame = firstDiagnosticFrame( &side );
+	firstDiagnosticFrame( &side );
 	uint32_t baud = UART_DIAGNOSTIC_BAUD_RATES[m_unUartDiagnosticBaudIndex];
 
 	m_bUartDiagnosticPassThroughMode = true;
@@ -461,18 +461,19 @@ void BroanComponent::enterUartDiagnosticPassThroughMode()
 	m_unUartDiagnosticHrvForwardedFrames = 0;
 	m_unUartDiagnosticRemoteForwardedFrames = 0;
 
-	if( frame )
-	{
-		m_nUartDiagnosticCandidateClientAddress = inferClientAddress( *frame );
-		m_bUartDiagnosticCandidateClientAddressValid = true;
-	}
-
 	ESP_LOGW("broan", "################ BROAN UART DIAGNOSTIC FIRST VALID SIDE ################");
 	ESP_LOGW("broan", "Pinned UART config: baud_rate=%u, inverted=%s", static_cast<unsigned>( baud ), m_bUartDiagnosticInverted ? "true" : "false" );
 	if( m_bUartDiagnosticCandidateClientAddressValid )
-		ESP_LOGW("broan", "Candidate client address: 0x%02X", m_nUartDiagnosticCandidateClientAddress );
+		ESP_LOGW("broan", "Confirmed client address from remote side: 0x%02X", m_nUartDiagnosticCandidateClientAddress );
+	else
+		ESP_LOGW("broan", "Client address is not confirmed yet; HRV Ping targets are probe addresses until a remote response is seen.");
+	if( m_unUartDiagnosticHrvProbeTargetCount > 0 )
+	{
+		std::string targets = formatDiagnosticHrvProbeTargets();
+		ESP_LOGW("broan", "Observed HRV Ping probe targets: %s", targets.c_str() );
+	}
 	ESP_LOGW("broan", "First valid side: %s", diagnosticSideLabel( side ) );
-	ESP_LOGW("broan", "Continuing in diagnostic pass-through mode until both UART sides carry valid frames.");
+	ESP_LOGW("broan", "Continuing in diagnostic pass-through mode until both UART sides carry valid frames and the remote side confirms client_address.");
 	if( !remote_uart_ )
 		ESP_LOGW("broan", "Remote UART is not configured, so complete pass-through validation cannot finish.");
 
@@ -510,13 +511,16 @@ void BroanComponent::startUartDiagnosticAttempt()
 	m_UartDiagnosticFirstValidSide = DiagnosticSideNone;
 	m_unUartDiagnosticHrvForwardedFrames = 0;
 	m_unUartDiagnosticRemoteForwardedFrames = 0;
+	m_unUartDiagnosticHrvProbeTargetCount = 0;
+	for( bool &seen : m_rgUartDiagnosticHrvProbeTargets )
+		seen = false;
 
 	resetDiagnosticStats( m_HrvDiagnosticStats );
 	resetDiagnosticStats( m_RemoteDiagnosticStats );
 
 	ESP_LOGW("broan", "================ BROAN UART DIAGNOSTIC ATTEMPT %u ================", static_cast<unsigned>( m_unUartDiagnosticAttemptCount ) );
 	ESP_LOGW("broan", "Trying baud_rate=%u, inverted=%s for %ums", static_cast<unsigned>( baud ), m_bUartDiagnosticInverted ? "true" : "false", UART_DIAGNOSTIC_ATTEMPT_MS );
-	ESP_LOGW("broan", "Both configured UARTs are tested independently; one valid side is enough to stop.");
+	ESP_LOGW("broan", "Both configured UARTs are tested independently; one valid side is enough to pin the UART config.");
 
 	configureDiagnosticUart( this->parent_, baud, m_bUartDiagnosticInverted, "HRV" );
 	configureDiagnosticUart( this->remote_uart_, baud, m_bUartDiagnosticInverted, "remote" );
@@ -547,7 +551,7 @@ void BroanComponent::finishUartDiagnosticAttempt(bool success)
 			uint8_t type = frame->m_vecMessage.empty() ? 0xFF : frame->m_vecMessage[0];
 			std::string raw = formatBytes( frame->m_vecRaw );
 			std::string message = formatBytes( frame->m_vecMessage );
-			ESP_LOGW("broan", "Valid side=%s, target=0x%02X, sender=0x%02X, message_type=0x%02X, client_address_candidate=0x%02X",
+			ESP_LOGW("broan", "Valid side=%s, target=0x%02X, sender=0x%02X, message_type=0x%02X, address_hint=0x%02X",
 				label ? label : "unknown",
 				frame->m_nTarget,
 				frame->m_nSender,
@@ -581,6 +585,8 @@ void BroanComponent::finishUartDiagnosticPassThroughSuccess()
 	ESP_LOGW("broan", "Use baud_rate=%u and tx_pin/rx_pin inverted=%s", static_cast<unsigned>( baud ), m_bUartDiagnosticInverted ? "true" : "false" );
 	if( m_bUartDiagnosticCandidateClientAddressValid )
 		ESP_LOGW("broan", "Use client_address: 0x%02X", m_nUartDiagnosticCandidateClientAddress );
+	else
+		ESP_LOGW("broan", "Client address was not confirmed from the remote side.");
 	ESP_LOGW("broan", "Forwarded HRV->remote frames=%u, remote->HRV frames=%u",
 		static_cast<unsigned>( m_unUartDiagnosticHrvForwardedFrames ),
 		static_cast<unsigned>( m_unUartDiagnosticRemoteForwardedFrames ) );
@@ -703,6 +709,7 @@ void BroanComponent::processDiagnosticUart(uart::UARTComponent *uart, BroanDiagn
 			if( stats.m_vecValidFrames.size() < UART_DIAGNOSTIC_MAX_VALID_FRAMES )
 				stats.m_vecValidFrames.push_back( frame );
 			ESP_LOGW("broan", "Diagnostic %s UART: valid Broan frame found", label );
+			updateDiagnosticAddressLearning( side, frame );
 			if( forward_valid_frames )
 				forwardDiagnosticFrame( side, frame );
 		}
@@ -802,7 +809,58 @@ bool BroanComponent::hasDiagnosticPassThroughSuccess() const
 	return m_HrvDiagnosticStats.m_unValidFrameCount > 0
 		&& m_RemoteDiagnosticStats.m_unValidFrameCount > 0
 		&& m_unUartDiagnosticHrvForwardedFrames > 0
-		&& m_unUartDiagnosticRemoteForwardedFrames > 0;
+		&& m_unUartDiagnosticRemoteForwardedFrames > 0
+		&& m_bUartDiagnosticCandidateClientAddressValid;
+}
+
+void BroanComponent::updateDiagnosticAddressLearning(BroanDiagnosticSide side, const BroanFrame &frame)
+{
+	if( side == DiagnosticSideHrv && isDiagnosticHrvProbeFrame( frame ) )
+	{
+		recordDiagnosticHrvProbeTarget( frame.m_nTarget );
+		return;
+	}
+
+	if( side != DiagnosticSideRemote )
+		return;
+
+	if( frame.m_nSender == m_nServerAddress )
+		return;
+
+	uint8_t address = frame.m_nSender;
+
+	if( !m_bUartDiagnosticCandidateClientAddressValid || m_nUartDiagnosticCandidateClientAddress != address )
+	{
+		m_nUartDiagnosticCandidateClientAddress = address;
+		m_bUartDiagnosticCandidateClientAddressValid = true;
+		ESP_LOGW("broan", "Diagnostic remote UART: confirmed client_address=0x%02X from frame target=0x%02X sender=0x%02X type=0x%02X",
+			m_nUartDiagnosticCandidateClientAddress,
+			frame.m_nTarget,
+			frame.m_nSender,
+			frame.m_vecMessage.empty() ? 0xFF : frame.m_vecMessage[0] );
+	}
+}
+
+void BroanComponent::recordDiagnosticHrvProbeTarget(uint8_t target)
+{
+	if( target >= sizeof( m_rgUartDiagnosticHrvProbeTargets ) / sizeof( m_rgUartDiagnosticHrvProbeTargets[0] ) )
+		return;
+
+	if( m_rgUartDiagnosticHrvProbeTargets[target] )
+		return;
+
+	m_rgUartDiagnosticHrvProbeTargets[target] = true;
+	m_unUartDiagnosticHrvProbeTargetCount++;
+	ESP_LOGW("broan", "Diagnostic HRV UART: observed HRV Ping probe target=0x%02X (%u unique targets)",
+		target,
+		static_cast<unsigned>( m_unUartDiagnosticHrvProbeTargetCount ) );
+}
+
+bool BroanComponent::isDiagnosticHrvProbeFrame(const BroanFrame &frame) const
+{
+	return frame.m_nSender == m_nServerAddress
+		&& !frame.m_vecMessage.empty()
+		&& frame.m_vecMessage[0] == 0x02;
 }
 
 void BroanComponent::forwardDiagnosticStoredFrames(BroanDiagnosticSide side)
@@ -829,15 +887,32 @@ void BroanComponent::forwardDiagnosticFrame(BroanDiagnosticSide side, const Broa
 	{
 		writeRawToRemote( frame.m_vecRaw );
 		m_unUartDiagnosticHrvForwardedFrames++;
-		ESP_LOGW("broan", "Diagnostic pass-through forwarded HRV->remote frame type=0x%02X target=0x%02X sender=0x%02X",
-			frame.m_vecMessage.empty() ? 0xFF : frame.m_vecMessage[0],
-			frame.m_nTarget,
-			frame.m_nSender );
+		if( isDiagnosticHrvProbeFrame( frame ) )
+		{
+			ESP_LOGD("broan", "Diagnostic pass-through forwarded HRV Ping probe to remote target=0x%02X sender=0x%02X",
+				frame.m_nTarget,
+				frame.m_nSender );
+		}
+		else
+		{
+			ESP_LOGW("broan", "Diagnostic pass-through forwarded HRV->remote frame type=0x%02X target=0x%02X sender=0x%02X",
+				frame.m_vecMessage.empty() ? 0xFF : frame.m_vecMessage[0],
+				frame.m_nTarget,
+				frame.m_nSender );
+		}
 		return;
 	}
 
 	if( side == DiagnosticSideRemote )
 	{
+		if( frame.m_nSender == m_nServerAddress )
+		{
+			ESP_LOGD("broan", "Diagnostic pass-through ignored remote-side server-origin frame target=0x%02X sender=0x%02X",
+				frame.m_nTarget,
+				frame.m_nSender );
+			return;
+		}
+
 		writeRawToHrv( frame.m_vecRaw );
 		m_unUartDiagnosticRemoteForwardedFrames++;
 		ESP_LOGW("broan", "Diagnostic pass-through forwarded remote->HRV frame type=0x%02X target=0x%02X sender=0x%02X",
@@ -858,7 +933,18 @@ void BroanComponent::logDiagnosticPassThroughStatus()
 		static_cast<unsigned>( millis() - m_unUartDiagnosticPassThroughStartedAt ) );
 
 	if( m_bUartDiagnosticCandidateClientAddressValid )
-		ESP_LOGW("broan", "Broan UART diagnostic candidate client address remains 0x%02X", m_nUartDiagnosticCandidateClientAddress );
+	{
+		ESP_LOGW("broan", "Broan UART diagnostic confirmed client_address=0x%02X", m_nUartDiagnosticCandidateClientAddress );
+	}
+	else
+	{
+		ESP_LOGW("broan", "Broan UART diagnostic is waiting for a remote-side response to confirm client_address.");
+		if( m_unUartDiagnosticHrvProbeTargetCount > 0 )
+		{
+			std::string targets = formatDiagnosticHrvProbeTargets();
+			ESP_LOGW("broan", "Observed HRV Ping probe targets so far: %s", targets.c_str() );
+		}
+	}
 }
 
 const char* BroanComponent::diagnosticSideLabel(BroanDiagnosticSide side) const
@@ -927,6 +1013,27 @@ uint8_t BroanComponent::inferClientAddress(const BroanFrame &frame) const
 	return frame.m_nTarget;
 }
 
+std::string BroanComponent::formatDiagnosticHrvProbeTargets() const
+{
+	if( m_unUartDiagnosticHrvProbeTargetCount == 0 )
+		return "(none)";
+
+	std::string out;
+	for( size_t i=0; i<sizeof( m_rgUartDiagnosticHrvProbeTargets ) / sizeof( m_rgUartDiagnosticHrvProbeTargets[0] ); i++ )
+	{
+		if( !m_rgUartDiagnosticHrvProbeTargets[i] )
+			continue;
+
+		char buffer[6];
+		snprintf( buffer, sizeof(buffer), "0x%02X", static_cast<unsigned>( i ) );
+		if( !out.empty() )
+			out += ' ';
+		out += buffer;
+	}
+
+	return out.empty() ? "(none)" : out;
+}
+
 void BroanComponent::logDiagnosticReport(bool success)
 {
 	uint32_t baud = UART_DIAGNOSTIC_BAUD_RATES[m_unUartDiagnosticBaudIndex];
@@ -993,7 +1100,7 @@ void BroanComponent::logDiagnosticSideReport(const char *label, const BroanDiagn
 		uint8_t type = frame.m_vecMessage.empty() ? 0xFF : frame.m_vecMessage[0];
 		std::string raw = formatBytes( frame.m_vecRaw );
 		std::string message = formatBytes( frame.m_vecMessage );
-		ESP_LOGW("broan", "%s valid frame %u: target=0x%02X sender=0x%02X type=0x%02X client_address_candidate=0x%02X",
+		ESP_LOGW("broan", "%s valid frame %u: target=0x%02X sender=0x%02X type=0x%02X address_hint=0x%02X",
 			label,
 			static_cast<unsigned>( i + 1 ),
 			frame.m_nTarget,

@@ -54,7 +54,7 @@ Pass-through mode lets the ESP32 sit between the ERV/HRV and the original serial
 
 When Home Assistant queues a command, the ESP32 takes one private HRV control grant, sends its command, receives the reply, then releases control and resumes transparent forwarding. If your RS485 boards need manual driver-enable pins, set `flow_control_pin` for the HRV side and `remote_flow_control_pin` for the wall remote side.
 
-Some units use a client address other than the default `0x12`. If UART diagnostic mode reports a valid HRV frame such as a ping to `target=0x01`, set `client_address: 0x01` under `broan:`. The server address defaults to `0x10`.
+Some units use a client address other than the default `0x12`. Use `uart_diagnostic` with both HRV and wall remote connected to confirm the address, then set the reported `client_address` under `broan:`. The server address defaults to `0x10`.
 
 See [examples/pass_through_example.yaml](./examples/pass_through_example.yaml) for a two-UART configuration.
 
@@ -86,7 +86,9 @@ broan:
 
 After boot, the diagnostic waits 30 seconds, then cycles common baud rates (`9600`, `19200`, `38400`, `57600`, `115200`) with `inverted=false` and `inverted=true`. Each attempt runs for 10 seconds and logs whether data was received, raw byte bursts in hex, invalid frame counts, and any valid Broan frames.
 
-When one side receives a valid Broan frame, the diagnostic pins that baud/inversion setting, reports the candidate `client_address`, applies the same UART config to the other side, and starts forwarding valid frames between the HRV and remote UARTs. It stops only after both sides have received valid frames and traffic has been forwarded in both directions. If only the HRV side is connected, it will continue reporting that it is waiting for the remote side.
+When one side receives a valid Broan frame, the diagnostic pins that baud/inversion setting, applies the same UART config to the other side, and starts forwarding valid frames between the HRV and remote UARTs. It stops only after both sides have received valid frames, traffic has been forwarded in both directions, and a remote-side frame has confirmed `client_address`.
+
+The HRV may send `Ping` frames while sweeping through possible target addresses. Those targets are reported as probe targets, not as confirmed client addresses. If only the HRV side is connected, the diagnostic will keep forwarding HRV frames and reporting that it is waiting for a remote-side response.
 
 When diagnostic mode reports success, copy the reported settings into the normal config and remove `uart_diagnostic: true`:
 
@@ -116,6 +118,7 @@ broan:
   id: mybroan
   uart_id: hrv_rs485
   remote_uart_id: remote_rs485
+  # Use the confirmed value printed by diagnostic success.
   client_address: 0x01
 ```
 

@@ -27,4 +27,4 @@ broan:
 # Diagnostic mode waits 30 seconds after boot, tests common baud rates and
 # UART inversion settings, then forwards traffic until both sides are verified.
 # Disable uart_diagnostic after copying the reported baud_rate, inverted, and
-# client_address values into the normal config.
+# confirmed client_address values into the normal config.

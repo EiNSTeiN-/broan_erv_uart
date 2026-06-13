@@ -374,8 +374,10 @@ private:
 	uint32_t m_unUartDiagnosticLastPassThroughReportAt = 0;
 	uint32_t m_unUartDiagnosticHrvForwardedFrames = 0;
 	uint32_t m_unUartDiagnosticRemoteForwardedFrames = 0;
+	uint32_t m_unUartDiagnosticHrvProbeTargetCount = 0;
 	size_t m_unUartDiagnosticBaudIndex = 0;
 	uint8_t m_nUartDiagnosticCandidateClientAddress = 0;
+	bool m_rgUartDiagnosticHrvProbeTargets[33] = {};
 	BroanDiagnosticSide m_UartDiagnosticFirstValidSide = DiagnosticSideNone;
 	BroanDiagnosticSideStats m_HrvDiagnosticStats;
 	BroanDiagnosticSideStats m_RemoteDiagnosticStats;
@@ -409,6 +411,9 @@ private:
 	bool processDiagnosticByte(BroanDiagnosticSideStats &stats, uint8_t value, BroanFrame &frame);
 	bool hasDiagnosticSuccess() const;
 	bool hasDiagnosticPassThroughSuccess() const;
+	void updateDiagnosticAddressLearning(BroanDiagnosticSide side, const BroanFrame &frame);
+	void recordDiagnosticHrvProbeTarget(uint8_t target);
+	bool isDiagnosticHrvProbeFrame(const BroanFrame &frame) const;
 	void forwardDiagnosticStoredFrames(BroanDiagnosticSide side);
 	void forwardDiagnosticFrame(BroanDiagnosticSide side, const BroanFrame &frame);
 	void logDiagnosticPassThroughStatus();
@@ -417,6 +422,7 @@ private:
 	const BroanFrame* firstDiagnosticFrame(const char **label) const;
 	const BroanFrame* firstDiagnosticFrame(BroanDiagnosticSide *side) const;
 	uint8_t inferClientAddress(const BroanFrame &frame) const;
+	std::string formatDiagnosticHrvProbeTargets() const;
 	void logDiagnosticReport(bool success);
 	void logDiagnosticSideReport(const char *label, const BroanDiagnosticSideStats &stats);
 	std::string formatBytes(const std::vector<uint8_t> &bytes) const;
