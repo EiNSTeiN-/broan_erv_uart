@@ -54,6 +54,8 @@ Pass-through mode lets the ESP32 sit between the ERV/HRV and the original serial
 
 When Home Assistant queues a command, the ESP32 takes one private HRV control grant, sends its command, receives the reply, then releases control and resumes transparent forwarding. If your RS485 boards need manual driver-enable pins, set `flow_control_pin` for the HRV side and `remote_flow_control_pin` for the wall remote side.
 
+The HRV-side and wall-remote-side A/B wires must be two separate RS485 buses; do not tie the two local transceiver A/B pairs together. Keep grounds common. Terminate each bus at its physical ends. Long wall-remote runs may need a 120 ohm resistor across A/B at the ESP remote-side terminal or transceiver footprint, especially if the remote receives forwarded pings but does not answer. With power off, a correctly terminated segment with two 120 ohm terminators usually measures about 60-70 ohm across A/B; about 120-160 ohm indicates one terminator, and much less than 60 ohm suggests too much termination.
+
 Some units use a client address other than the default `0x12`. Use `uart_diagnostic` with both HRV and wall remote connected to confirm the address, then set the reported `client_address` under `broan:`. The server address defaults to `0x10`.
 
 See [examples/pass_through_example.yaml](./examples/pass_through_example.yaml) for a two-UART configuration.
@@ -127,7 +129,7 @@ Q: I see errors about failed communication
 
 A: This could be a lot of things.
 - If you're getting timeouts, it's probably the yaml being misconfigured. A lot of rs485 devices want a flow control pin, which needs to be specified (check your device's datasheet)
-- If you see it getting data but complaining about alignment and unknown commands, it's likely either you swapped the +/- wires, or the communication is very weak. Double check that you wired up the ground wire correctly, and try adding or removing esp side termination.
+- If you see it getting data but complaining about alignment and unknown commands, it's likely either you swapped the +/- wires, or the communication is very weak. Double check that you wired up the ground wire correctly, and try adding or removing ESP-side termination.
 
 Q: Why doesn't it support X?
 
