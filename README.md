@@ -59,7 +59,65 @@ Some units use a client address other than the default `0x12`. If UART diagnosti
 See [examples/pass_through_example.yaml](./examples/pass_through_example.yaml) for a two-UART configuration.
 
 ## UART diagnostic mode
-Set `uart_diagnostic: true` under `broan:` to scan common baud rates and UART polarity after boot. The diagnostic waits 30 seconds, tries each baud with normal and inverted signaling, and reports raw byte bursts and valid Broan frames. Once one side has a valid frame, it pins that UART configuration, forwards frames between the HRV and remote UARTs, and stops only after both sides have received valid frames and traffic has been forwarded in both directions. Disable this option after copying the reported `baud_rate`, `inverted`, and `client_address` values into the normal config.
+Use UART diagnostic mode when wiring a new RS485 adapter, checking A/B polarity, or finding the client address used by a specific ERV/HRV. Diagnostic mode disables normal control while it is active.
+
+Add `uart_diagnostic: true` under `broan:` and keep the UART pins you want to test:
+
+```yaml
+uart:
+  - id: hrv_rs485
+    tx_pin: GPIO17
+    rx_pin: GPIO18
+    baud_rate: 38400
+    rx_buffer_size: 2048
+
+  - id: remote_rs485
+    tx_pin: GPIO25
+    rx_pin: GPIO26
+    baud_rate: 38400
+    rx_buffer_size: 2048
+
+broan:
+  id: mybroan
+  uart_id: hrv_rs485
+  remote_uart_id: remote_rs485
+  uart_diagnostic: true
+```
+
+After boot, the diagnostic waits 30 seconds, then cycles common baud rates (`9600`, `19200`, `38400`, `57600`, `115200`) with `inverted=false` and `inverted=true`. Each attempt runs for 10 seconds and logs whether data was received, raw byte bursts in hex, invalid frame counts, and any valid Broan frames.
+
+When one side receives a valid Broan frame, the diagnostic pins that baud/inversion setting, reports the candidate `client_address`, applies the same UART config to the other side, and starts forwarding valid frames between the HRV and remote UARTs. It stops only after both sides have received valid frames and traffic has been forwarded in both directions. If only the HRV side is connected, it will continue reporting that it is waiting for the remote side.
+
+When diagnostic mode reports success, copy the reported settings into the normal config and remove `uart_diagnostic: true`:
+
+```yaml
+uart:
+  - id: hrv_rs485
+    tx_pin:
+      number: GPIO17
+      inverted: false
+    rx_pin:
+      number: GPIO18
+      inverted: false
+    baud_rate: 38400
+    rx_buffer_size: 2048
+
+  - id: remote_rs485
+    tx_pin:
+      number: GPIO25
+      inverted: false
+    rx_pin:
+      number: GPIO26
+      inverted: false
+    baud_rate: 38400
+    rx_buffer_size: 2048
+
+broan:
+  id: mybroan
+  uart_id: hrv_rs485
+  remote_uart_id: remote_rs485
+  client_address: 0x01
+```
 
 ## FAQ
 Q: I see errors about failed communication

@@ -1,0 +1,30 @@
+external_components:
+  - source:
+      type: git
+      url: https://github.com/nspitko/broan_erv_uart
+      ref: main
+    components: [ broan ]
+
+uart:
+  - id: hrv_rs485
+    tx_pin: GPIO17
+    rx_pin: GPIO18
+    baud_rate: 38400
+    rx_buffer_size: 2048
+
+  - id: remote_rs485
+    tx_pin: GPIO25
+    rx_pin: GPIO26
+    baud_rate: 38400
+    rx_buffer_size: 2048
+
+broan:
+  id: mybroan
+  uart_id: hrv_rs485
+  remote_uart_id: remote_rs485
+  uart_diagnostic: true
+
+# Diagnostic mode waits 30 seconds after boot, tests common baud rates and
+# UART inversion settings, then forwards traffic until both sides are verified.
+# Disable uart_diagnostic after copying the reported baud_rate, inverted, and
+# client_address values into the normal config.
