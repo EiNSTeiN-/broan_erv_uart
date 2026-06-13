@@ -37,6 +37,7 @@ void BroanComponent::setFanMode( std::string mode )
 	m_vecFields[FanMode].markDirty();
 
 	writeRegisters( vecFields );
+	startFanModeOptimistic( value );
 
 }
 

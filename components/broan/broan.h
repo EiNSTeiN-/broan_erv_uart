@@ -361,6 +361,9 @@ private:
 	bool m_bExpectingReply = false;
 	bool m_bHaveSentMessage = false;
 	bool m_bPrivateControlSession = false;
+	bool m_bFanModeOptimistic = false;
+	uint8_t m_nFanModeOptimisticValue = 0;
+	uint32_t m_unFanModeOptimisticUntil = 0;
 
 	std::deque<std::vector<uint8_t>> m_vecSendQueue;
 
@@ -437,6 +440,10 @@ private:
 	void replyIfAllowed();
 	void runTasks();
 	void parseBroanFields(const std::vector<uint8_t>& message);
+	void startFanModeOptimistic(uint8_t value);
+	bool shouldSuppressFanModePublish(uint8_t reported_value, bool *force_publish);
+	void publishFanModeState(uint8_t value);
+	std::string fanModeToString(uint8_t value) const;
 	void writeRegisters( const std::vector<BroanField_t> &values );
 
 	float remap(float flIn, float flInMin, float flInMax, float flOutMin, float flOutMax) {

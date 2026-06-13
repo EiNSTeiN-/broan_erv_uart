@@ -17,6 +17,7 @@ static constexpr size_t UART_DIAGNOSTIC_MAX_BURST_BYTES = 128;
 static constexpr size_t UART_DIAGNOSTIC_MAX_VALID_FRAMES = 8;
 static constexpr size_t UART_DIAGNOSTIC_MAX_BYTES_PER_LOOP = 512;
 static constexpr uint32_t UART_DIAGNOSTIC_PASS_THROUGH_REPORT_MS = 10000;
+static constexpr uint32_t FAN_MODE_OPTIMISTIC_HOLD_MS = 10000;
 
 
 void BroanComponent::setup()
@@ -1296,6 +1297,85 @@ void BroanComponent::queueMessage(std::vector<uint8_t>& message)
 	m_vecSendQueue.push_back(message);
 }
 
+std::string BroanComponent::fanModeToString(uint8_t value) const
+{
+	switch( value )
+	{
+		case BroanFanMode::Ovr:
+			return "ovr";
+		case BroanFanMode::Intermittent:
+			return "int";
+		case BroanFanMode::Min:
+			return "min";
+		case BroanFanMode::Max:
+			return "max";
+		case BroanFanMode::Medium:
+			return "medium";
+		case BroanFanMode::Turbo:
+			return "turbo";
+		case BroanFanMode::Humidity:
+			return "humidity";
+		case BroanFanMode::Recirculate:
+			return "recirculate";
+		default:
+			return "off";
+	}
+}
+
+void BroanComponent::publishFanModeState(uint8_t value)
+{
+#ifdef USE_SELECT
+	if( !fan_mode_select_ )
+		return;
+
+	fan_mode_select_->publish_state( fanModeToString( value ) );
+#endif
+}
+
+void BroanComponent::startFanModeOptimistic(uint8_t value)
+{
+	m_bFanModeOptimistic = true;
+	m_nFanModeOptimisticValue = value;
+	m_unFanModeOptimisticUntil = millis() + FAN_MODE_OPTIMISTIC_HOLD_MS;
+	publishFanModeState( value );
+	ESP_LOGD("broan", "Optimistically publishing fan mode %s while waiting for HRV acknowledgement",
+		fanModeToString( value ).c_str() );
+}
+
+bool BroanComponent::shouldSuppressFanModePublish(uint8_t reported_value, bool *force_publish)
+{
+	if( force_publish )
+		*force_publish = false;
+
+	if( !m_bFanModeOptimistic )
+		return false;
+
+	if( reported_value == m_nFanModeOptimisticValue )
+	{
+		m_bFanModeOptimistic = false;
+		ESP_LOGD("broan", "HRV confirmed fan mode %s", fanModeToString( reported_value ).c_str() );
+		return false;
+	}
+
+	uint32_t now = millis();
+	if( now < m_unFanModeOptimisticUntil )
+	{
+		ESP_LOGD("broan", "Suppressing stale fan mode %s while waiting for %s",
+			fanModeToString( reported_value ).c_str(),
+			fanModeToString( m_nFanModeOptimisticValue ).c_str() );
+		return true;
+	}
+
+	m_bFanModeOptimistic = false;
+	if( force_publish )
+		*force_publish = true;
+	ESP_LOGW("broan", "Fan mode %s was not confirmed within %ums; publishing reported mode %s",
+		fanModeToString( m_nFanModeOptimisticValue ).c_str(),
+		static_cast<unsigned>( FAN_MODE_OPTIMISTIC_HOLD_MS ),
+		fanModeToString( reported_value ).c_str() );
+	return false;
+}
+
 
 void BroanComponent::parseBroanFields(const std::vector<uint8_t>& message)
 {
@@ -1327,8 +1407,12 @@ void BroanComponent::parseBroanFields(const std::vector<uint8_t>& message)
 			pField->m_value.m_rgBytes[b] = static_cast<char>(message[nDataPos+b]);
 
 		pField->m_unLastUpdate = millis();
+
+		bool bForcePublish = false;
+		if( unField == BroanField::FanMode && shouldSuppressFanModePublish( pField->m_value.m_chValue, &bForcePublish ) )
+			continue;
 	
-		if( oldVal == pField->m_value.m_nValue )
+		if( oldVal == pField->m_value.m_nValue && !bForcePublish )
 			continue;
 
 		switch(unField)
@@ -1336,25 +1420,7 @@ void BroanComponent::parseBroanFields(const std::vector<uint8_t>& message)
 #ifdef USE_SELECT
 			case BroanField::FanMode:
 			{
-				if( !fan_mode_select_ )
-					continue;
-
-				std::string strMode;
-				switch( pField->m_value.m_chValue )
-				{
-					case BroanFanMode::Ovr: strMode = "ovr"; break;
-					case BroanFanMode::Intermittent: strMode = "int"; break;
-					case BroanFanMode::Min: strMode = "min"; break;
-					case BroanFanMode::Max: strMode = "max"; break;
-					case BroanFanMode::Medium: strMode = "medium"; break;
-					case BroanFanMode::Turbo: strMode = "turbo"; break;
-					case BroanFanMode::Humidity: strMode = "humidity"; break;
-					case BroanFanMode::Recirculate: strMode = "recirculate"; break;
-
-					default: strMode = "off"; break;
-				}
-
-				fan_mode_select_->publish_state( strMode );
+				publishFanModeState( pField->m_value.m_chValue );
 			}
 			break;
 #endif

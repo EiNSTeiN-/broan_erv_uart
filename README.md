@@ -141,6 +141,8 @@ A: Use pass-through mode with two RS485 ports if you want to keep the serial wal
 
 The `ovr` fan mode is a reported state, not a normal commandable mode. If it appears in Home Assistant, change modes from the wall control or choose another fan mode; the component ignores requests to write `ovr` back to the HRV.
 
+Fan mode writes are published optimistically for up to 10 seconds while the component waits for the HRV to confirm the new mode. This prevents Home Assistant from briefly showing the previous mode during the HRV control handoff. If the HRV does not confirm the new mode in time, the reported HRV mode is published again.
+
 ### ESPhome yaml
 Add this to an existing config.
 ```
