@@ -22,6 +22,8 @@ broan:
   id: mybroan
   uart_id: hrv_rs485
   remote_uart_id: remote_rs485
+  # Use the client address reported by uart_diagnostic if it differs.
+  # client_address: 0x01
   # Set these only if your RS485 transceivers need manual driver enable.
   # flow_control_pin: GPIO21
   # remote_flow_control_pin: GPIO22

@@ -20,6 +20,8 @@ CONF_BROAN_ID = "broan_id"
 CONF_REMOTE_UART_ID = "remote_uart_id"
 CONF_REMOTE_FLOW_CONTROL_PIN = "remote_flow_control_pin"
 CONF_UART_DIAGNOSTIC = "uart_diagnostic"
+CONF_SERVER_ADDRESS = "server_address"
+CONF_CLIENT_ADDRESS = "client_address"
 
 CONFIG_SCHEMA = (
     cv.Schema(
@@ -29,6 +31,8 @@ CONFIG_SCHEMA = (
             cv.Optional(CONF_REMOTE_UART_ID): cv.use_id(uart.UARTComponent),
             cv.Optional(CONF_REMOTE_FLOW_CONTROL_PIN): pins.gpio_output_pin_schema,
             cv.Optional(CONF_UART_DIAGNOSTIC, default=False): cv.boolean,
+            cv.Optional(CONF_SERVER_ADDRESS, default=0x10): cv.hex_uint8_t,
+            cv.Optional(CONF_CLIENT_ADDRESS, default=0x12): cv.hex_uint8_t,
         }
     )
     .extend(cv.COMPONENT_SCHEMA)
@@ -88,4 +92,6 @@ async def to_code(config):
         pin = await gpio_pin_expression(config[CONF_REMOTE_FLOW_CONTROL_PIN])
         cg.add(var.set_remote_flow_control_pin(pin))
 
+    cg.add(var.set_server_address(config[CONF_SERVER_ADDRESS]))
+    cg.add(var.set_client_address(config[CONF_CLIENT_ADDRESS]))
     cg.add(var.set_uart_diagnostic_mode(config[CONF_UART_DIAGNOSTIC]))

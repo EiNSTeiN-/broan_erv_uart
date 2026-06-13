@@ -79,6 +79,8 @@ void BroanComponent::dump_config()
 	ESP_LOGCONFIG("broan", "Broan:");
 	ESP_LOGCONFIG("broan", "Pass-through mode: %s", isPassThroughEnabled() ? "enabled" : "disabled" );
 	ESP_LOGCONFIG("broan", "UART diagnostic mode: %s", m_bUartDiagnosticMode ? "enabled" : "disabled" );
+	ESP_LOGCONFIG("broan", "Server address: 0x%02X", m_nServerAddress );
+	ESP_LOGCONFIG("broan", "Client address: 0x%02X", m_nClientAddress );
 	if(flow_control_pin_)
 	{
 		char buffer[255];

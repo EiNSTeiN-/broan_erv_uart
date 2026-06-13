@@ -231,8 +231,8 @@ class BroanComponent : public Component, public uart::UARTDevice
 #endif
 
 public:
-	const uint8_t m_nServerAddress = 0x10;
-	const uint8_t m_nClientAddress = 0x12;
+	uint8_t m_nServerAddress = 0x10;
+	uint8_t m_nClientAddress = 0x12;
 
 	bool m_bWaitForRemote = false;
 
@@ -313,6 +313,8 @@ public:
 	void set_flow_control_pin(GPIOPin *flow_control_pin) { this->flow_control_pin_ = flow_control_pin; }
 	void set_remote_uart_parent(uart::UARTComponent *remote_uart) { this->remote_uart_ = remote_uart; }
 	void set_remote_flow_control_pin(GPIOPin *remote_flow_control_pin) { this->remote_flow_control_pin_ = remote_flow_control_pin; }
+	void set_server_address(uint8_t address) { this->m_nServerAddress = address; }
+	void set_client_address(uint8_t address) { this->m_nClientAddress = address; }
 	void set_uart_diagnostic_mode(bool enabled) { this->m_bUartDiagnosticMode = enabled; }
 
 	// Control API

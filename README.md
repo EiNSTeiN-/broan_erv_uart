@@ -54,6 +54,8 @@ Pass-through mode lets the ESP32 sit between the ERV/HRV and the original serial
 
 When Home Assistant queues a command, the ESP32 takes one private HRV control grant, sends its command, receives the reply, then releases control and resumes transparent forwarding. If your RS485 boards need manual driver-enable pins, set `flow_control_pin` for the HRV side and `remote_flow_control_pin` for the wall remote side.
 
+Some units use a client address other than the default `0x12`. If UART diagnostic mode reports a valid HRV frame such as a ping to `target=0x01`, set `client_address: 0x01` under `broan:`. The server address defaults to `0x10`.
+
 See [examples/pass_through_example.yaml](./examples/pass_through_example.yaml) for a two-UART configuration.
 
 ## FAQ
