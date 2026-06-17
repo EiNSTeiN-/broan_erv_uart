@@ -10,8 +10,10 @@ from esphome.const import (
 from .. import CONF_BROAN_ID, BroanComponent, broan_ns
 
 HumidityControlSwitch = broan_ns.class_("HumidityControlSwitch", switch.Switch)
+RemoteLockoutSwitch = broan_ns.class_("RemoteLockoutSwitch", switch.Switch)
 
 CONF_HUMIDITY_CONTROL = "humidity_control"
+CONF_REMOTE_LOCKOUT = "remote_lockout"
 
 CONFIG_SCHEMA = {
     cv.GenerateID(CONF_BROAN_ID): cv.use_id(BroanComponent),
@@ -19,6 +21,11 @@ CONFIG_SCHEMA = {
         HumidityControlSwitch,
         entity_category=ENTITY_CATEGORY_CONFIG,
         icon=ICON_WATER,
+    ),
+    cv.Optional(CONF_REMOTE_LOCKOUT): switch.switch_schema(
+        RemoteLockoutSwitch,
+        entity_category=ENTITY_CATEGORY_CONFIG,
+        icon="mdi:remote-off",
     ),
 }
 
@@ -29,3 +36,8 @@ async def to_code(config):
         s = await switch.new_switch(humidity_control_config)
         await cg.register_parented(s, config[CONF_BROAN_ID])
         cg.add(broan_component.set_humidity_control_switch(s))
+
+    if remote_lockout_config := config.get(CONF_REMOTE_LOCKOUT):
+        s = await switch.new_switch(remote_lockout_config)
+        await cg.register_parented(s, config[CONF_BROAN_ID])
+        cg.add(broan_component.set_remote_lockout_switch(s))

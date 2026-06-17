@@ -397,6 +397,24 @@ void BroanComponent::handleHrvPassThroughFrame(const BroanFrame &frame)
 
 void BroanComponent::handleRemotePassThroughFrame(const BroanFrame &frame)
 {
+	uint8_t fanModeValue = 0;
+	bool isFanModeWrite = frame.m_nTarget == m_nServerAddress && parseFanModeWrite( frame.m_vecMessage, &fanModeValue );
+
+	if( m_bRemoteLockout )
+	{
+		if( isFanModeWrite )
+		{
+			ESP_LOGW("broan", "Remote lockout discarded fan mode request: %s", fanModeToString( fanModeValue ).c_str() );
+		}
+		else
+		{
+			uint8_t messageType = frame.m_vecMessage.empty() ? 0x00 : frame.m_vecMessage[0];
+			ESP_LOGD("broan", "Remote lockout discarded remote frame type=0x%02X target=0x%02X sender=0x%02X",
+				messageType, frame.m_nTarget, frame.m_nSender );
+		}
+		return;
+	}
+
 	if( m_bPrivateControlSession )
 	{
 		ESP_LOGD("broan", "Dropping remote frame while ESP has private control");
@@ -405,8 +423,7 @@ void BroanComponent::handleRemotePassThroughFrame(const BroanFrame &frame)
 
 	writeRawToHrv( frame.m_vecRaw );
 
-	uint8_t fanModeValue = 0;
-	if( frame.m_nTarget == m_nServerAddress && parseFanModeWrite( frame.m_vecMessage, &fanModeValue ) )
+	if( isFanModeWrite )
 	{
 		publishFanModeSource("remote");
 		startFanModeOptimistic( fanModeValue );

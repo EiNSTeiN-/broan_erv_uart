@@ -111,6 +111,11 @@ void BroanComponent::setHumidityControl( bool enable ) {
 	writeRegisters( vecFields );
 }
 
+void BroanComponent::setRemoteLockout( bool enable ) {
+	m_bRemoteLockout = enable;
+	ESP_LOGI("broan_control", "Remote lockout %s", enable ? "enabled" : "disabled");
+}
+
 void BroanComponent::setHumiditySetpoint( float humidity ) {
 	std::vector<BroanField_t> vecFields;
 

@@ -244,6 +244,7 @@ class BroanComponent : public Component, public uart::UARTDevice
 
 #ifdef USE_SWITCH
   SUB_SWITCH(humidity_control)
+  SUB_SWITCH(remote_lockout)
 #endif
 
 public:
@@ -338,6 +339,7 @@ public:
 	void setTargetCFMRegister( uint8_t opcodeHigh, uint8_t opcodeLow, float flTargetCFM );
 	void resetFilter();
 	void setHumidityControl( bool enable );
+	void setRemoteLockout( bool enable );
 	void setHumiditySetpoint( float humidity );
 	void setCurrentHumidity( float humidity );
 	void setIntermittentPeriod( uint32_t period );
@@ -366,6 +368,7 @@ private:
 	bool m_bExpectingReply = false;
 	bool m_bHaveSentMessage = false;
 	bool m_bPrivateControlSession = false;
+	bool m_bRemoteLockout = false;
 	bool m_bFanModeOptimistic = false;
 	uint8_t m_nFanModeOptimisticValue = 0;
 	uint32_t m_unFanModeOptimisticUntil = 0;

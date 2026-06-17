@@ -38,6 +38,11 @@ text_sensor:
     fan_mode_source:
       name: "Fan Mode Source"
 
+switch:
+  - platform: broan
+    remote_lockout:
+      name: "Remote Lockout"
+
 number:
   - platform: broan
     target_supply_cfm_min:

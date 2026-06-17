@@ -43,6 +43,7 @@ Also be aware some RS485 devices will label their pins A and B instead of D+ and
 * Fan CFM
 * Min/medium/max target CFM registers for supply and exhaust airflow
 * Fan mode source reporting (`esphome` or `remote`)
+* Optional remote lockout in pass-through mode
 
 The six `target_*_cfm_*` numbers expose the raw target CFM registers directly as 0-255 CFM values. Some HRV/ERV models may restore these target values from the unit's local speed profile after a delay; if a value reverts, check the unit-side speed/profile configuration.
 
@@ -59,6 +60,8 @@ Pass-through mode lets the ESP32 sit between the ERV/HRV and the original serial
 When Home Assistant queues a command, the ESP32 takes one private HRV control grant, sends its command, receives the reply, then releases control and resumes transparent forwarding. If your RS485 boards need manual driver-enable pins, set `flow_control_pin` for the HRV side and `remote_flow_control_pin` for the wall remote side.
 
 If `fan_mode_source` is configured under `text_sensor`, it reports `esphome` when the fan mode is set from Home Assistant/ESPHome and `remote` when the wall remote sends a fan-mode write through pass-through mode. Remote fan-mode writes are published optimistically, then later HRV state reports confirm or correct the fan mode value.
+
+If `remote_lockout` is configured under `switch` and enabled, frames from the wall remote are discarded instead of forwarded to the HRV. Fan mode requests from the remote are logged as discarded; Home Assistant/ESPHome can still control the HRV.
 
 The HRV-side and wall-remote-side A/B wires must be two separate RS485 buses; do not tie the two local transceiver A/B pairs together. Keep grounds common. Terminate each bus at its physical ends. Long wall-remote runs may need a 120 ohm resistor across A/B at the ESP remote-side terminal or transceiver footprint, especially if the remote receives forwarded pings but does not answer. With power off, a correctly terminated segment with two 120 ohm terminators usually measures about 60-70 ohm across A/B; about 120-160 ohm indicates one terminator, and much less than 60 ohm suggests too much termination.
 
@@ -183,6 +186,11 @@ text_sensor:
   - platform: broan
     fan_mode_source:
       name: "Fan Mode Source"
+
+switch:
+  - platform: broan
+    remote_lockout:
+      name: "Remote Lockout"
 
 number:
   - platform: broan
