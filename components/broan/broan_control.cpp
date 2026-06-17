@@ -65,29 +65,78 @@ void BroanComponent::setFanSpeed( float input )
 
 }
 
+void BroanComponent::setTargetCFMRegister( uint8_t opcodeHigh, uint8_t opcodeLow, float flTargetCFM )
+{
+	uint32_t unField = lookupFieldIndex( opcodeHigh, opcodeLow );
+	if( unField == INVALID_FIELD )
+	{
+		ESP_LOGW("broan","Refusing to set unmapped target CFM register %02X%02X", opcodeHigh, opcodeLow );
+		return;
+	}
+
+	switch( unField )
+	{
+		case BroanField::CFMIn_Medium:
+		case BroanField::CFMOut_Medium:
+		case BroanField::CFMIn_Max:
+		case BroanField::CFMOut_Max:
+		case BroanField::CFMIn_Min:
+		case BroanField::CFMOut_Min:
+			break;
+
+		default:
+			ESP_LOGW("broan","Refusing to set non-target-CFM register %02X%02X", opcodeHigh, opcodeLow );
+			return;
+	}
+
+	if( flTargetCFM < 0 )
+		flTargetCFM = 0;
+	else if( flTargetCFM > 255 )
+		flTargetCFM = 255;
+
+	std::vector<BroanField_t> vecFields;
+	vecFields.push_back( m_vecFields[unField].copyForUpdate( flTargetCFM ) );
+	m_vecFields[unField].markDirty();
+
+	writeRegisters( vecFields );
+}
 
 void BroanComponent::setFanSpeedCFM( BroanFanMode mode, BroanCFMMode direction, float flTargetCFM )
 {
 	std::vector<BroanField_t> vecFields;
 
+	auto addField = [&]( BroanField field )
+	{
+		vecFields.push_back( m_vecFields[field].copyForUpdate( flTargetCFM ) );
+		m_vecFields[field].markDirty();
+	};
 
 	switch( mode )
 	{
 		case BroanFanMode::Max:
 		{
 			if( ( direction & BroanCFMMode::Input ) != 0 )
-				vecFields.push_back( m_vecFields[CFMIn_Max].copyForUpdate( flTargetCFM ) );
+				addField( BroanField::CFMIn_Max );
 			if( ( direction & BroanCFMMode::Output ) != 0 )
-				vecFields.push_back( m_vecFields[CFMOut_Max].copyForUpdate( flTargetCFM ) );
+				addField( BroanField::CFMOut_Max );
+		}
+		break;
+
+		case BroanFanMode::Medium:
+		{
+			if( ( direction & BroanCFMMode::Input ) != 0 )
+				addField( BroanField::CFMIn_Medium );
+			if( ( direction & BroanCFMMode::Output ) != 0 )
+				addField( BroanField::CFMOut_Medium );
 		}
 		break;
 
 		case BroanFanMode::Min:
 		{
 			if( ( direction & BroanCFMMode::Input ) != 0 )
-				vecFields.push_back( m_vecFields[CFMIn_Max].copyForUpdate( flTargetCFM ) );
+				addField( BroanField::CFMIn_Min );
 			if( ( direction & BroanCFMMode::Output ) != 0 )
-				vecFields.push_back( m_vecFields[CFMOut_Max].copyForUpdate( flTargetCFM ) );
+				addField( BroanField::CFMOut_Min );
 		}
 		break;
 
@@ -97,7 +146,8 @@ void BroanComponent::setFanSpeedCFM( BroanFanMode mode, BroanCFMMode direction, 
 
 	}
 
-	writeRegisters( vecFields );
+	if( !vecFields.empty() )
+		writeRegisters( vecFields );
 }
 
 void BroanComponent::resetFilter()

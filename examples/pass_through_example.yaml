@@ -37,6 +37,18 @@ number:
   - platform: broan
     fan_speed:
       name: "Fan Speed"
+    target_supply_cfm_min:
+      name: "Target Supply CFM Min"
+    target_exhaust_cfm_min:
+      name: "Target Exhaust CFM Min"
+    target_supply_cfm_medium:
+      name: "Target Supply CFM Medium"
+    target_exhaust_cfm_medium:
+      name: "Target Exhaust CFM Medium"
+    target_supply_cfm_max:
+      name: "Target Supply CFM Max"
+    target_exhaust_cfm_max:
+      name: "Target Exhaust CFM Max"
 
 sensor:
   - platform: broan

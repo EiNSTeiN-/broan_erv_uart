@@ -40,7 +40,10 @@ Also be aware some RS485 devices will label their pins A and B instead of D+ and
 * Humidity control mode
 * Intake temperature
 * Filter life left
-* Fan CFM 
+* Fan CFM
+* Min/medium/max target CFM registers for supply and exhaust airflow
+
+The `fan_speed` number is a convenience percentage that writes the medium supply and exhaust target CFM registers together. The six `target_*_cfm_*` numbers expose the raw target CFM registers directly as 0-255 CFM values. Some HRV/ERV models may restore these target values from the unit's local speed profile after a delay; if a value reverts, check the unit-side speed/profile configuration.
 
 More features will be added as time allows. I've documented many fields that aren't supported yet. If there's a specific feature you want prioritized, open an issue. This project is at a point where it "works for me" so I don't have a lot of guiding light on what else should be added without external input.
 
@@ -176,10 +179,25 @@ select:
 number:
   - platform: broan
 
-    # Speed as a ratio of min vs max speed. Eg, if your MIN is 20 CFM and your MAX is 
-    # 40 CFM, 50% means medium rill be at 30 CFM
+    # Speed as a ratio of min vs max speed. Eg, if your MIN is 20 CFM and your MAX is
+    # 40 CFM, 50% means medium will be at 30 CFM. This writes both medium CFM targets.
     fan_speed:
       name: "fan speed"
+
+    # Direct target CFM registers, exposed as 0-255 CFM values.
+    # These let you inspect and tune the stored min/medium/max supply and exhaust targets.
+    target_supply_cfm_min:
+      name: "Target Supply CFM Min"
+    target_exhaust_cfm_min:
+      name: "Target Exhaust CFM Min"
+    target_supply_cfm_medium:
+      name: "Target Supply CFM Medium"
+    target_exhaust_cfm_medium:
+      name: "Target Exhaust CFM Medium"
+    target_supply_cfm_max:
+      name: "Target Supply CFM Max"
+    target_exhaust_cfm_max:
+      name: "Target Exhaust CFM Max"
 
     # How many seconds ON per hour in int mode (eg, a value of 20 means the ERV will run
     # 20 minutes on 40 minutes off every hour )

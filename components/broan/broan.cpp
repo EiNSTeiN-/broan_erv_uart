@@ -1496,6 +1496,9 @@ void BroanComponent::parseBroanFields(const std::vector<uint8_t>& message)
 			// @todo: We don't support unbalanced values here currently....
 			case BroanField::CFMIn_Medium:
 			{
+				if( target_supply_cfm_medium_number_ )
+					target_supply_cfm_medium_number_->publish_state(pField->m_value.m_flValue);
+
 				if( !fan_speed_number_ )
 					continue;
 
@@ -1504,6 +1507,41 @@ void BroanComponent::parseBroanFields(const std::vector<uint8_t>& message)
 				float flAdjusted = remap( pField->m_value.m_flValue, flMin, flMax, 0.f, 100.f );
 				fan_speed_number_->publish_state(flAdjusted);
 			}
+			break;
+
+			case BroanField::CFMOut_Medium:
+				if( !target_exhaust_cfm_medium_number_ )
+					continue;
+
+				target_exhaust_cfm_medium_number_->publish_state(pField->m_value.m_flValue);
+			break;
+
+			case BroanField::CFMIn_Max:
+				if( !target_supply_cfm_max_number_ )
+					continue;
+
+				target_supply_cfm_max_number_->publish_state(pField->m_value.m_flValue);
+			break;
+
+			case BroanField::CFMOut_Max:
+				if( !target_exhaust_cfm_max_number_ )
+					continue;
+
+				target_exhaust_cfm_max_number_->publish_state(pField->m_value.m_flValue);
+			break;
+
+			case BroanField::CFMIn_Min:
+				if( !target_supply_cfm_min_number_ )
+					continue;
+
+				target_supply_cfm_min_number_->publish_state(pField->m_value.m_flValue);
+			break;
+
+			case BroanField::CFMOut_Min:
+				if( !target_exhaust_cfm_min_number_ )
+					continue;
+
+				target_exhaust_cfm_min_number_->publish_state(pField->m_value.m_flValue);
 			break;
 
 			case BroanField::IntModeDuration:

@@ -65,8 +65,8 @@ enum BroanFieldType
 
 enum BroanCFMMode
 {
-	Input = 1 >> 0,
-	Output = 1 >> 1,
+	Input = 1 << 0,
+	Output = 1 << 1,
 	Both = BroanCFMMode::Input | BroanCFMMode::Output,
 };
 
@@ -228,6 +228,12 @@ class BroanComponent : public Component, public uart::UARTDevice
 
 #ifdef USE_NUMBER
 	SUB_NUMBER(fan_speed)
+	SUB_NUMBER(target_supply_cfm_min)
+	SUB_NUMBER(target_exhaust_cfm_min)
+	SUB_NUMBER(target_supply_cfm_medium)
+	SUB_NUMBER(target_exhaust_cfm_medium)
+	SUB_NUMBER(target_supply_cfm_max)
+	SUB_NUMBER(target_exhaust_cfm_max)
 	SUB_NUMBER(humidity_setpoint)
 	SUB_NUMBER(intermittent_period)
 #endif
@@ -331,6 +337,7 @@ public:
 	void setFanMode( std::string mode );
 	void setFanSpeed( float speed );
 	void setFanSpeedCFM( BroanFanMode mode, BroanCFMMode direction, float flTargetCFM );
+	void setTargetCFMRegister( uint8_t opcodeHigh, uint8_t opcodeLow, float flTargetCFM );
 	void resetFilter();
 	void setHumidityControl( bool enable );
 	void setHumiditySetpoint( float humidity );

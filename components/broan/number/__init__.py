@@ -18,12 +18,27 @@ UNIT_PERIOD = "Period"
 from .. import CONF_BROAN_ID, BroanComponent, broan_ns
 
 FanSpeedNumber = broan_ns.class_("FanSpeedNumber", number.Number)
+TargetCFMNumber = broan_ns.class_("TargetCFMNumber", number.Number)
 HumiditySetpointNumber = broan_ns.class_("HumiditySetpointNumber", number.Number)
 IntermittentPeriodNumber = broan_ns.class_("IntermittentPeriodNumber", number.Number)
 
 CONF_FAN_SPEED = "fan_speed"
+CONF_TARGET_SUPPLY_CFM_MIN = "target_supply_cfm_min"
+CONF_TARGET_EXHAUST_CFM_MIN = "target_exhaust_cfm_min"
+CONF_TARGET_SUPPLY_CFM_MEDIUM = "target_supply_cfm_medium"
+CONF_TARGET_EXHAUST_CFM_MEDIUM = "target_exhaust_cfm_medium"
+CONF_TARGET_SUPPLY_CFM_MAX = "target_supply_cfm_max"
+CONF_TARGET_EXHAUST_CFM_MAX = "target_exhaust_cfm_max"
 CONF_HUMIDITY_SETPOINT = "humidity_setpoint"
 CONF_INT_PERIOD = "intermittent_period"
+
+def target_cfm_number_schema():
+    return number.number_schema(
+        TargetCFMNumber,
+        entity_category=ENTITY_CATEGORY_CONFIG,
+        unit_of_measurement=UNIT_CFM,
+        icon=ICON_FAN,
+    )
 
 CONFIG_SCHEMA = cv.Schema(
     {
@@ -35,6 +50,12 @@ CONFIG_SCHEMA = cv.Schema(
 			unit_of_measurement=UNIT_PERCENT,
             icon=ICON_FAN,
         ),
+        cv.Optional(CONF_TARGET_SUPPLY_CFM_MIN): target_cfm_number_schema(),
+        cv.Optional(CONF_TARGET_EXHAUST_CFM_MIN): target_cfm_number_schema(),
+        cv.Optional(CONF_TARGET_SUPPLY_CFM_MEDIUM): target_cfm_number_schema(),
+        cv.Optional(CONF_TARGET_EXHAUST_CFM_MEDIUM): target_cfm_number_schema(),
+        cv.Optional(CONF_TARGET_SUPPLY_CFM_MAX): target_cfm_number_schema(),
+        cv.Optional(CONF_TARGET_EXHAUST_CFM_MAX): target_cfm_number_schema(),
         cv.Optional(CONF_HUMIDITY_SETPOINT): number.number_schema(
             HumiditySetpointNumber,
             device_class=DEVICE_CLASS_HUMIDITY,
@@ -61,6 +82,54 @@ async def to_code(config):
         )
         await cg.register_parented(n, config[CONF_BROAN_ID])
         cg.add(broan_component.set_fan_speed_number(n))
+
+    if target_supply_cfm_min_config := config.get(CONF_TARGET_SUPPLY_CFM_MIN):
+        n = await number.new_number(
+            target_supply_cfm_min_config, min_value=0, max_value=255, step=1
+        )
+        await cg.register_parented(n, config[CONF_BROAN_ID])
+        cg.add(n.set_opcode(0x0A, 0x50))
+        cg.add(broan_component.set_target_supply_cfm_min_number(n))
+
+    if target_exhaust_cfm_min_config := config.get(CONF_TARGET_EXHAUST_CFM_MIN):
+        n = await number.new_number(
+            target_exhaust_cfm_min_config, min_value=0, max_value=255, step=1
+        )
+        await cg.register_parented(n, config[CONF_BROAN_ID])
+        cg.add(n.set_opcode(0x0B, 0x50))
+        cg.add(broan_component.set_target_exhaust_cfm_min_number(n))
+
+    if target_supply_cfm_medium_config := config.get(CONF_TARGET_SUPPLY_CFM_MEDIUM):
+        n = await number.new_number(
+            target_supply_cfm_medium_config, min_value=0, max_value=255, step=1
+        )
+        await cg.register_parented(n, config[CONF_BROAN_ID])
+        cg.add(n.set_opcode(0x06, 0x22))
+        cg.add(broan_component.set_target_supply_cfm_medium_number(n))
+
+    if target_exhaust_cfm_medium_config := config.get(CONF_TARGET_EXHAUST_CFM_MEDIUM):
+        n = await number.new_number(
+            target_exhaust_cfm_medium_config, min_value=0, max_value=255, step=1
+        )
+        await cg.register_parented(n, config[CONF_BROAN_ID])
+        cg.add(n.set_opcode(0x08, 0x22))
+        cg.add(broan_component.set_target_exhaust_cfm_medium_number(n))
+
+    if target_supply_cfm_max_config := config.get(CONF_TARGET_SUPPLY_CFM_MAX):
+        n = await number.new_number(
+            target_supply_cfm_max_config, min_value=0, max_value=255, step=1
+        )
+        await cg.register_parented(n, config[CONF_BROAN_ID])
+        cg.add(n.set_opcode(0x0E, 0x50))
+        cg.add(broan_component.set_target_supply_cfm_max_number(n))
+
+    if target_exhaust_cfm_max_config := config.get(CONF_TARGET_EXHAUST_CFM_MAX):
+        n = await number.new_number(
+            target_exhaust_cfm_max_config, min_value=0, max_value=255, step=1
+        )
+        await cg.register_parented(n, config[CONF_BROAN_ID])
+        cg.add(n.set_opcode(0x0F, 0x50))
+        cg.add(broan_component.set_target_exhaust_cfm_max_number(n))
 
     if humidity_setpoint_config := config.get(CONF_HUMIDITY_SETPOINT):
         h = await number.new_number(

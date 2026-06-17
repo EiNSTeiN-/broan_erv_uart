@@ -31,9 +31,9 @@ async def to_code(config):
             options=[
                 "off",
                 "min",
+                "medium",
                 "max",
                 "int",
-                "medium",
                 "turbo",
                 "humidity",
                 "recirculate",
