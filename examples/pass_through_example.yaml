@@ -35,8 +35,6 @@ select:
 
 number:
   - platform: broan
-    fan_speed:
-      name: "Fan Speed"
     target_supply_cfm_min:
       name: "Target Supply CFM Min"
     target_exhaust_cfm_min:

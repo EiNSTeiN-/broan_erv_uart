@@ -1495,18 +1495,10 @@ void BroanComponent::parseBroanFields(const std::vector<uint8_t>& message)
 
 			// @todo: We don't support unbalanced values here currently....
 			case BroanField::CFMIn_Medium:
-			{
-				if( target_supply_cfm_medium_number_ )
-					target_supply_cfm_medium_number_->publish_state(pField->m_value.m_flValue);
-
-				if( !fan_speed_number_ )
+				if( !target_supply_cfm_medium_number_ )
 					continue;
 
-				float flMin = m_vecFields[CFMIn_Min].m_value.m_flValue;
-				float flMax = m_vecFields[CFMIn_Max].m_value.m_flValue;
-				float flAdjusted = remap( pField->m_value.m_flValue, flMin, flMax, 0.f, 100.f );
-				fan_speed_number_->publish_state(flAdjusted);
-			}
+				target_supply_cfm_medium_number_->publish_state(pField->m_value.m_flValue);
 			break;
 
 			case BroanField::CFMOut_Medium:

@@ -36,14 +36,14 @@ Also be aware some RS485 devices will label their pins A and B instead of D+ and
 
 ## Supported features
 * Setting fan mode (Standby, Min, Medium, Max, Intermittent, Turbo, and Override)
-* Setting fan speed in medium mode
+* Configuring min/medium/max target CFM registers
 * Humidity control mode
 * Intake temperature
 * Filter life left
 * Fan CFM
 * Min/medium/max target CFM registers for supply and exhaust airflow
 
-The `fan_speed` number is a convenience percentage that writes the medium supply and exhaust target CFM registers together. The six `target_*_cfm_*` numbers expose the raw target CFM registers directly as 0-255 CFM values. Some HRV/ERV models may restore these target values from the unit's local speed profile after a delay; if a value reverts, check the unit-side speed/profile configuration.
+The six `target_*_cfm_*` numbers expose the raw target CFM registers directly as 0-255 CFM values. Some HRV/ERV models may restore these target values from the unit's local speed profile after a delay; if a value reverts, check the unit-side speed/profile configuration.
 
 More features will be added as time allows. I've documented many fields that aren't supported yet. If there's a specific feature you want prioritized, open an issue. This project is at a point where it "works for me" so I don't have a lot of guiding light on what else should be added without external input.
 
@@ -178,11 +178,6 @@ select:
 
 number:
   - platform: broan
-
-    # Speed as a ratio of min vs max speed. Eg, if your MIN is 20 CFM and your MAX is
-    # 40 CFM, 50% means medium will be at 30 CFM. This writes both medium CFM targets.
-    fan_speed:
-      name: "fan speed"
 
     # Direct target CFM registers, exposed as 0-255 CFM values.
     # These let you inspect and tune the stored min/medium/max supply and exhaust targets.

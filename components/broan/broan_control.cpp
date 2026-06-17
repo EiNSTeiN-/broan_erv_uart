@@ -41,30 +41,6 @@ void BroanComponent::setFanMode( std::string mode )
 
 }
 
-void BroanComponent::setFanSpeed( float input )
-{
-	//return;
-	float flMin = m_vecFields[CFMIn_Min].m_value.m_flValue;
-	float flMax = m_vecFields[CFMIn_Max].m_value.m_flValue;
-	if( flMin == 0 || flMax == 0 )
-	{
-		ESP_LOGE("broan","Failed to set fan speed: Invalid min/max state");
-		return;
-	}
-	float value = remap( input, 0.f, 100.f, flMin, flMax );
-
-	std::vector<BroanField_t> vecFields;
-
-	vecFields.push_back( m_vecFields[CFMIn_Medium].copyForUpdate( value ) );
-	vecFields.push_back( m_vecFields[CFMOut_Medium].copyForUpdate( value ) );
-
-	m_vecFields[CFMIn_Medium].markDirty();
-	m_vecFields[CFMOut_Medium].markDirty();
-
-	writeRegisters( vecFields );
-
-}
-
 void BroanComponent::setTargetCFMRegister( uint8_t opcodeHigh, uint8_t opcodeLow, float flTargetCFM )
 {
 	uint32_t unField = lookupFieldIndex( opcodeHigh, opcodeLow );

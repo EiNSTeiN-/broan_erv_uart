@@ -227,7 +227,6 @@ class BroanComponent : public Component, public uart::UARTDevice
 #endif
 
 #ifdef USE_NUMBER
-	SUB_NUMBER(fan_speed)
 	SUB_NUMBER(target_supply_cfm_min)
 	SUB_NUMBER(target_exhaust_cfm_min)
 	SUB_NUMBER(target_supply_cfm_medium)
@@ -335,7 +334,6 @@ public:
 
 	// Control API
 	void setFanMode( std::string mode );
-	void setFanSpeed( float speed );
 	void setFanSpeedCFM( BroanFanMode mode, BroanCFMMode direction, float flTargetCFM );
 	void setTargetCFMRegister( uint8_t opcodeHigh, uint8_t opcodeLow, float flTargetCFM );
 	void resetFilter();
@@ -453,10 +451,6 @@ private:
 	std::string fanModeToString(uint8_t value) const;
 	void writeRegisters( const std::vector<BroanField_t> &values );
 
-	float remap(float flIn, float flInMin, float flInMax, float flOutMin, float flOutMax) {
-  		return (flIn - flInMin) * (flOutMax - flOutMin) / (flInMax - flInMin) + flOutMin;
-	}
-
 	BroanField_t* lookupField( uint8_t opcodeHigh, uint8_t opcodeLow );
 	uint32_t lookupFieldIndex( uint8_t opcodeHigh, uint8_t opcodeLow );
 	void handleUnknownField(uint32_t nOpcodeHigh, uint32_t nOpcodeLow, uint8_t len, uint32_t i, const std::vector<uint8_t>& message );
@@ -468,7 +462,6 @@ protected:
 	// esphome glue
 	std::string fan_mode_{};
 	
-	float fan_speed_{0.f};
 	float power_{0.f};
 	float temperature_{0.f};
 	float temperature_out_{0.f};
