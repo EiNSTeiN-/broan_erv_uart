@@ -63,13 +63,6 @@ enum BroanFieldType
 	Void,
 };
 
-enum BroanCFMMode
-{
-	Input = 1 << 0,
-	Output = 1 << 1,
-	Both = BroanCFMMode::Input | BroanCFMMode::Output,
-};
-
 enum BroanFanMode
 {
 	Off = 0x01,
@@ -334,7 +327,6 @@ public:
 
 	// Control API
 	void setFanMode( std::string mode );
-	void setFanSpeedCFM( BroanFanMode mode, BroanCFMMode direction, float flTargetCFM );
 	void setTargetCFMRegister( uint8_t opcodeHigh, uint8_t opcodeLow, float flTargetCFM );
 	void resetFilter();
 	void setHumidityControl( bool enable );

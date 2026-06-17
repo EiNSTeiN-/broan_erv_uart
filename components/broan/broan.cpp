@@ -1379,26 +1379,49 @@ bool BroanComponent::shouldSuppressFanModePublish(uint8_t reported_value, bool *
 
 void BroanComponent::parseBroanFields(const std::vector<uint8_t>& message)
 {
-    size_t i = 1;
+	size_t i = 1;
 	bool bPublish = false;
 
-    while (i < message.size())
-    {
-        uint8_t nOpcodeHigh = message[i++];
-        uint8_t nOpcodeLow  = message[i++];
+	while (i < message.size())
+	{
+		if( message.size() - i < 3 )
+		{
+			ESP_LOGW("broan", "Malformed field response: %u trailing byte(s)", static_cast<unsigned>( message.size() - i ) );
+			break;
+		}
+
+		uint8_t nOpcodeHigh = message[i++];
+		uint8_t nOpcodeLow  = message[i++];
 		size_t len = message[i++];
 		uint32_t nDataPos = i;
+
+		if( message.size() - i < len )
+		{
+			ESP_LOGW("broan", "Malformed field %02X%02X length %u exceeds remaining payload %u",
+				nOpcodeHigh, nOpcodeLow, static_cast<unsigned>( len ), static_cast<unsigned>( message.size() - i ) );
+			break;
+		}
 
 		i += len;
 
 		uint32_t unField = lookupFieldIndex(nOpcodeHigh, nOpcodeLow);
 		if( unField == INVALID_FIELD )
-			continue;
-
-		BroanField_t *pField = &m_vecFields[unField];
-		if( !pField )
 		{
 			handleUnknownField(nOpcodeHigh, nOpcodeLow, len, nDataPos, message);
+			continue;
+		}
+
+		BroanField_t *pField = &m_vecFields[unField];
+		size_t expectedLen = 4;
+		if( pField->m_nType == BroanFieldType::Byte )
+			expectedLen = 1;
+		else if( pField->m_nType == BroanFieldType::Void )
+			expectedLen = 0;
+
+		if( len != expectedLen )
+		{
+			ESP_LOGW("broan", "Ignoring field %02X%02X with unexpected length %u, expected %u",
+				nOpcodeHigh, nOpcodeLow, static_cast<unsigned>( len ), static_cast<unsigned>( expectedLen ) );
 			continue;
 		}
 

@@ -77,55 +77,6 @@ void BroanComponent::setTargetCFMRegister( uint8_t opcodeHigh, uint8_t opcodeLow
 	writeRegisters( vecFields );
 }
 
-void BroanComponent::setFanSpeedCFM( BroanFanMode mode, BroanCFMMode direction, float flTargetCFM )
-{
-	std::vector<BroanField_t> vecFields;
-
-	auto addField = [&]( BroanField field )
-	{
-		vecFields.push_back( m_vecFields[field].copyForUpdate( flTargetCFM ) );
-		m_vecFields[field].markDirty();
-	};
-
-	switch( mode )
-	{
-		case BroanFanMode::Max:
-		{
-			if( ( direction & BroanCFMMode::Input ) != 0 )
-				addField( BroanField::CFMIn_Max );
-			if( ( direction & BroanCFMMode::Output ) != 0 )
-				addField( BroanField::CFMOut_Max );
-		}
-		break;
-
-		case BroanFanMode::Medium:
-		{
-			if( ( direction & BroanCFMMode::Input ) != 0 )
-				addField( BroanField::CFMIn_Medium );
-			if( ( direction & BroanCFMMode::Output ) != 0 )
-				addField( BroanField::CFMOut_Medium );
-		}
-		break;
-
-		case BroanFanMode::Min:
-		{
-			if( ( direction & BroanCFMMode::Input ) != 0 )
-				addField( BroanField::CFMIn_Min );
-			if( ( direction & BroanCFMMode::Output ) != 0 )
-				addField( BroanField::CFMOut_Min );
-		}
-		break;
-
-
-		default:
-			ESP_LOGW("broan","Unhandled: Setting fan speed limits for  mode %02X", mode );
-
-	}
-
-	if( !vecFields.empty() )
-		writeRegisters( vecFields );
-}
-
 void BroanComponent::resetFilter()
 {
 	std::vector<BroanField_t> vecFields;
