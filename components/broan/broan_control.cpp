@@ -31,6 +31,8 @@ void BroanComponent::setFanMode( std::string mode )
 		value = BroanFanMode::Off;
 
 
+	publishFanModeSource("esphome");
+
 	std::vector<BroanField_t> vecFields;
 	vecFields.push_back( m_vecFields[FanMode].copyForUpdate( value ) );
 

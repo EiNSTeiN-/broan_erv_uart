@@ -405,6 +405,13 @@ void BroanComponent::handleRemotePassThroughFrame(const BroanFrame &frame)
 
 	writeRawToHrv( frame.m_vecRaw );
 
+	uint8_t fanModeValue = 0;
+	if( frame.m_nTarget == m_nServerAddress && parseFanModeWrite( frame.m_vecMessage, &fanModeValue ) )
+	{
+		publishFanModeSource("remote");
+		startFanModeOptimistic( fanModeValue );
+	}
+
 	if( frame.m_nTarget == m_nServerAddress && !frame.m_vecMessage.empty() && frame.m_vecMessage[0] == 0x03 )
 		m_bWaitForRemote = false;
 }
@@ -1322,6 +1329,37 @@ std::string BroanComponent::fanModeToString(uint8_t value) const
 	}
 }
 
+bool BroanComponent::parseFanModeWrite(const std::vector<uint8_t>& message, uint8_t *value) const
+{
+	if( message.empty() || message[0] != 0x40 )
+		return false;
+
+	size_t i = 1;
+	while( i < message.size() )
+	{
+		if( message.size() - i < 3 )
+			return false;
+
+		uint8_t nOpcodeHigh = message[i++];
+		uint8_t nOpcodeLow = message[i++];
+		size_t len = message[i++];
+
+		if( message.size() - i < len )
+			return false;
+
+		if( nOpcodeHigh == m_vecFields[FanMode].m_nOpcodeHigh && nOpcodeLow == m_vecFields[FanMode].m_nOpcodeLow && len == 1 )
+		{
+			if( value )
+				*value = message[i];
+			return true;
+		}
+
+		i += len;
+	}
+
+	return false;
+}
+
 void BroanComponent::publishFanModeState(uint8_t value)
 {
 #ifdef USE_SELECT
@@ -1329,6 +1367,16 @@ void BroanComponent::publishFanModeState(uint8_t value)
 		return;
 
 	fan_mode_select_->publish_state( fanModeToString( value ) );
+#endif
+}
+
+void BroanComponent::publishFanModeSource(const char *source)
+{
+#ifdef USE_TEXT_SENSOR
+	if( !fan_mode_source_text_sensor_ )
+		return;
+
+	fan_mode_source_text_sensor_->publish_state( source );
 #endif
 }
 

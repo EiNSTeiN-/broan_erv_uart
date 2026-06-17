@@ -33,6 +33,11 @@ select:
     fan_mode:
       name: "Fan Mode"
 
+text_sensor:
+  - platform: broan
+    fan_mode_source:
+      name: "Fan Mode Source"
+
 number:
   - platform: broan
     target_supply_cfm_min:

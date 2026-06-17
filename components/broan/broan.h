@@ -11,6 +11,10 @@
 #include "esphome/components/sensor/sensor.h"
 #endif
 
+#ifdef USE_TEXT_SENSOR
+#include "esphome/components/text_sensor/text_sensor.h"
+#endif
+
 #ifdef USE_SELECT
 #include "esphome/components/select/select.h"
 #endif
@@ -213,6 +217,10 @@ class BroanComponent : public Component, public uart::UARTDevice
 	SUB_SENSOR(exhaust_cfm)
 	SUB_SENSOR(supply_rpm)
 	SUB_SENSOR(exhaust_rpm)
+#endif
+
+#ifdef USE_TEXT_SENSOR
+	SUB_TEXT_SENSOR(fan_mode_source)
 #endif
 
 #ifdef USE_SELECT
@@ -437,9 +445,11 @@ private:
 	void replyIfAllowed();
 	void runTasks();
 	void parseBroanFields(const std::vector<uint8_t>& message);
+	bool parseFanModeWrite(const std::vector<uint8_t>& message, uint8_t *value) const;
 	void startFanModeOptimistic(uint8_t value);
 	bool shouldSuppressFanModePublish(uint8_t reported_value, bool *force_publish);
 	void publishFanModeState(uint8_t value);
+	void publishFanModeSource(const char *source);
 	std::string fanModeToString(uint8_t value) const;
 	void writeRegisters( const std::vector<BroanField_t> &values );
 
